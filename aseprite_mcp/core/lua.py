@@ -251,6 +251,10 @@ def script_preview(path: Path, out_png: Path, scale: int, frame: int) -> str:
     return (
         _open_sprite(path)
         + _check_frame(frame)
+        + f"if spr.width * {scale} > 4096 or spr.height * {scale} > 4096 then\n"
+        f'  error(string.format("preview would be %dx%d; keep scaled size under 4096px (canvas %dx%d, scale {scale})",\n'
+        f"    spr.width * {scale}, spr.height * {scale}, spr.width, spr.height))\n"
+        "end\n"
         + "local img = Image(spr.width, spr.height, spr.colorMode)\n"
         + f"img:drawSprite(spr, {frame})\n"
         + f"img:resize{{ width = spr.width * {scale}, height = spr.height * {scale} }}\n"

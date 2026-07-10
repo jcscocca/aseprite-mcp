@@ -127,6 +127,7 @@ def test_preview_script_scales_nearest_and_verifies_output():
     out = Path("/tmp/preview.png")
     s = lua.script_preview(SPR, out, scale=8, frame=1)
     assert "img:drawSprite(spr, 1)" in s
+    assert "4096" in s  # guard against huge scaled previews
     assert "img:resize{ width = spr.width * 8, height = spr.height * 8 }" in s
     assert "palette = spr.palettes[1]" in s
     assert 'io.open("/tmp/preview.png", "rb")' in s
