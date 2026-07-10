@@ -55,8 +55,9 @@ def test_draw_pixels_script_batches_colors_and_checks_bounds():
         Pixel(2, 2, RGBA(0, 0, 255)),
     ]
     s = lua.script_draw_pixels(SPR, pixels, layer=None, frame=2)
-    # distinct colors defined once in a table
-    assert s.count("Color{ r=255, g=0, b=0, a=255 }") == 1
+    # distinct colors defined once in a table, via the mode-aware helper
+    assert s.count("amcp_color(255, 0, 0, 255)") == 1
+    assert "spr.colorMode == ColorMode.INDEXED" in s  # indexed colors resolve against the sprite palette
     assert "put(0, 0, C[1])" in s
     assert "put(1, 0, C[1])" in s
     assert "put(2, 2, C[2])" in s
@@ -81,6 +82,7 @@ def test_draw_shape_line_script():
     op = ShapeOp(tool="line", points=[(0, 0), (15, 15)], color=RGBA(0, 255, 0))
     s = lua.script_draw_shape(SPR, op, layer=None, frame=1)
     assert 'tool = "line"' in s
+    assert "color = amcp_color(0, 255, 0, 255)" in s
     assert "Point(0, 0), Point(15, 15)" in s
     assert "app.useTool" in s
     assert "tolerance" not in s
@@ -112,7 +114,7 @@ def test_add_layer_script_fails_on_duplicate():
 
 def test_add_frame_duplicate_mode():
     s = lua.script_add_frame(SPR, 150, "duplicate")
-    assert "spr:newFrame(#spr.frames)" in s
+    assert "spr:newFrame()" in s  # no-arg form appends a copy of the last frame and returns it
     assert "fr.duration = 0.15" in s
     assert lua.RESULT_MARKER in s
 

@@ -23,6 +23,28 @@ end
 """
 
 
+# Converting Color{r,g,b} to a pixel/tool color in INDEXED mode goes through the
+# *app's* current palette, which in batch mode is not the sprite's palette — so
+# the palette index is computed here from the sprite's own palette instead.
+_AMCP_COLOR = r"""
+local function amcp_color(r, g, b, a)
+  if spr.colorMode == ColorMode.INDEXED then
+    if a == 0 then return Color{ index = spr.transparentColor } end
+    local pal = spr.palettes[1]
+    local best, bestd = 0, math.huge
+    for i = 0, #pal - 1 do
+      local pc = pal:getColor(i)
+      local dr, dg, db = pc.red - r, pc.green - g, pc.blue - b
+      local d = dr * dr + dg * dg + db * db
+      if d < bestd then best, bestd = i, d end
+    end
+    return Color{ index = best }
+  end
+  return Color{ r = r, g = g, b = b, a = a }
+end
+"""
+
+
 def lua_quote(s: str) -> str:
     escaped = (
         s.replace("\\", "\\\\")
@@ -36,6 +58,11 @@ def lua_quote(s: str) -> str:
 
 def color_literal(c: RGBA) -> str:
     return f"Color{{ r={c.r}, g={c.g}, b={c.b}, a={c.a} }}"
+
+
+def color_call(c: RGBA) -> str:
+    """Mode-aware color expression; requires _AMCP_COLOR emitted after the sprite is open."""
+    return f"amcp_color({c.r}, {c.g}, {c.b}, {c.a})"
 
 
 def _open_sprite(path: Path) -> str:
@@ -163,13 +190,14 @@ def script_draw_pixels(path: Path, pixels: list[Pixel], layer: str | None, frame
     for px in pixels:
         color_index.setdefault(px.color, len(color_index) + 1)
     color_table = ", ".join(
-        color_literal(c) for c, _ in sorted(color_index.items(), key=lambda kv: kv[1])
+        color_call(c) for c, _ in sorted(color_index.items(), key=lambda kv: kv[1])
     )
     puts = "".join(
         f"put({px.x}, {px.y}, C[{color_index[px.color]}])\n" for px in pixels
     )
     return (
         _open_sprite(path)
+        + _AMCP_COLOR
         + _check_frame(frame)
         + _resolve_layer(layer)
         + _ensure_full_canvas_cel(frame)
@@ -201,13 +229,14 @@ def script_draw_shape(path: Path, op: ShapeOp, layer: str | None, frame: int) ->
         )
     return (
         _open_sprite(path)
+        + _AMCP_COLOR
         + _check_frame(frame)
         + _resolve_layer(layer)
         + bounds_check
         + _ensure_full_canvas_cel(frame)
         + "app.useTool{\n"
         f'  tool = "{op.tool}",\n'
-        f"  color = {color_literal(op.color)},\n"
+        f"  color = {color_call(op.color)},\n"
         "  layer = layer,\n"
         f"  frame = {frame},\n"
         f"  points = {{ {points} }},\n"
@@ -234,7 +263,9 @@ def script_add_layer(path: Path, name: str) -> str:
 
 def script_add_frame(path: Path, duration_ms: int, mode: str) -> str:
     if mode == "duplicate":
-        new_frame = "local fr = spr:newFrame(#spr.frames)\n"
+        # no-arg newFrame appends a copy of the last frame and returns the new
+        # frame; newFrame(n) returns the frame at position n, not the copy
+        new_frame = "local fr = spr:newFrame()\n"
     else:
         new_frame = "local fr = spr:newEmptyFrame(#spr.frames + 1)\n"
     return (
