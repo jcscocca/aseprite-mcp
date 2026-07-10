@@ -125,6 +125,50 @@ def test_add_frame_empty_mode():
     assert "fr.duration = 1.0" in s
 
 
+def test_add_tag_script():
+    s = lua.script_add_tag(SPR, "walk", 2, 4, "AniDir.PING_PONG")
+    assert "spr:newTag(2, 4)" in s
+    assert 'tag.name = "walk"' in s
+    assert "tag.aniDir = AniDir.PING_PONG" in s
+    # newTag itself does no bounds checking, so the script must
+    assert "frame 4 out of range" in s or "#spr.frames" in s
+    assert "already exists" in s  # duplicate names would collide as animations
+    assert "saveAs" in s
+
+
+def test_get_canvas_info_script_lists_tags():
+    s = lua.script_get_canvas_info(SPR)
+    assert "spr.tags" in s
+    assert "aniDir" in s
+    assert "pingpong_reverse" in s  # aniDir ints map to export direction strings
+
+
+def test_delete_frame_script_guards_last_frame():
+    s = lua.script_delete_frame(SPR, 2)
+    assert "spr:deleteFrame(2)" in s
+    assert "the only frame" in s  # a sprite must keep at least one frame
+    assert "frame 2 out of range" in s or "#spr.frames" in s
+    assert lua.RESULT_MARKER in s
+    assert "saveAs" in s
+
+
+def test_copy_cel_script():
+    s = lua.script_copy_cel(SPR, 1, 3, layer="body")
+    assert 'spr.layers["body"]' in s
+    assert "layer:cel(1)" in s
+    assert "nothing to copy" in s  # empty source cel is a loud error
+    # newCel deep-copies the source image, so frames stay independent
+    assert "spr:newCel(layer, 3, src.image, src.position)" in s
+    assert "saveAs" in s
+
+
+def test_set_frame_duration_script():
+    s = lua.script_set_frame_duration(SPR, 2, 250)
+    assert "spr.frames[2].duration = 0.25" in s
+    assert "frame 2 out of range" in s or "#spr.frames" in s
+    assert "saveAs" in s
+
+
 def test_preview_script_scales_nearest_and_verifies_output():
     out = Path("/tmp/preview.png")
     s = lua.script_preview(SPR, out, scale=8, frame=1)
@@ -186,6 +230,22 @@ def test_read_pixels_zero_rect_resolves_to_canvas_in_lua():
     s = lua.script_read_pixels(SPR, rect=(0, 0, 0, 0), frame=1)
     assert "spr.width" in s and "spr.height" in s
     assert "past the canvas" in s
+
+
+def test_clear_region_script_raw_image_clear():
+    s = lua.script_clear_region(SPR, rect=(2, 3, 4, 5), layer="fx", frame=2)
+    assert 'spr.layers["fx"]' in s
+    assert "nothing to clear" in s  # empty layer/frame is a loud error, not a no-op
+    assert "drawImage" in s  # cel normalized to full canvas so rect coords = canvas coords
+    assert ":clear(Rectangle(" in s
+    assert "app.useTool" not in s  # raw image clear — tool strokes alpha-blend and can't erase
+    assert "past the canvas" in s
+    assert "saveAs" in s
+
+
+def test_clear_region_zero_rect_resolves_to_canvas():
+    s = lua.script_clear_region(SPR, rect=(0, 0, 0, 0), layer=None, frame=1)
+    assert "spr.width" in s and "spr.height" in s
 
 
 def test_preview_script_grid_overlay():

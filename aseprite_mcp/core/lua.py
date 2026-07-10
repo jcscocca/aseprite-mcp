@@ -173,11 +173,20 @@ for i = 0, #pal - 1 do
   local c = pal:getColor(i)
   pcolors[#pcolors + 1] = string.format('"#%02x%02x%02x"', c.red, c.green, c.blue)
 end
+-- aniDir ints in the same order the spritesheet JSON export uses
+local anidirs = { [0] = "forward", [1] = "reverse", [2] = "pingpong", [3] = "pingpong_reverse" }
+local tags = {}
+for i = 1, #spr.tags do
+  local t = spr.tags[i]
+  tags[#tags + 1] = string.format(
+    '{"name": "%s", "from_frame": %d, "to_frame": %d, "direction": "%s"}',
+    jesc(t.name), t.fromFrame.frameNumber, t.toFrame.frameNumber, anidirs[t.aniDir] or "forward")
+end
 """
         + f'print("{RESULT_MARKER} " .. string.format(\n'
-        + "  '{\"width\": %d, \"height\": %d, \"color_mode\": \"%s\", \"layers\": [%s], \"frames\": [%s], \"palette\": [%s]}',\n"
+        + "  '{\"width\": %d, \"height\": %d, \"color_mode\": \"%s\", \"layers\": [%s], \"frames\": [%s], \"palette\": [%s], \"tags\": [%s]}',\n"
         + "  spr.width, spr.height, cm,\n"
-        + '  table.concat(layers, ", "), table.concat(frames, ", "), table.concat(pcolors, ", ")))\n'
+        + '  table.concat(layers, ", "), table.concat(frames, ", "), table.concat(pcolors, ", "), table.concat(tags, ", ")))\n'
     )
 
 
@@ -246,6 +255,35 @@ def script_draw_shape(path: Path, op: ShapeOp, layer: str | None, frame: int) ->
     )
 
 
+def script_clear_region(
+    path: Path, rect: tuple[int, int, int, int], layer: str | None, frame: int
+) -> str:
+    x, y, w, h = rect
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + _resolve_layer(layer)
+        + f"local rx, ry, rw, rh = {x}, {y}, {w}, {h}\n"
+        + "if rw == 0 then rw = spr.width - rx end\n"
+        + "if rh == 0 then rh = spr.height - ry end\n"
+        + "if rw < 1 or rh < 1 or rx + rw > spr.width or ry + rh > spr.height then\n"
+        + '  error(string.format("clear region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
+        + "    rx, ry, rw, rh, spr.width, spr.height))\n"
+        + "end\n"
+        + f"local cel = layer:cel({frame})\n"
+        + "if cel == nil then\n"
+        + f'  error("layer \'" .. layer.name .. "\' has no content on frame {frame} — nothing to clear")\n'
+        + "end\n"
+        # Image:clear rects are image-local (offset by the cel position), so
+        # normalize to a full-canvas cel first; canvas coords then apply directly.
+        + "local full = Image(spr.width, spr.height, spr.colorMode)\n"
+        + "full:drawImage(cel.image, cel.position)\n"
+        + f"cel = spr:newCel(layer, {frame}, full, Point(0, 0))\n"
+        + "cel.image:clear(Rectangle(rx, ry, rw, rh))\n"
+        + _save_sprite(path)
+    )
+
+
 def script_add_layer(path: Path, name: str) -> str:
     q = lua_quote(name)
     return (
@@ -274,6 +312,65 @@ def script_add_frame(path: Path, duration_ms: int, mode: str) -> str:
         + f"fr.duration = {duration_ms / 1000!r}\n"
         + _save_sprite(path)
         + f'print("{RESULT_MARKER} " .. string.format(\'{{"frame": %d, "total_frames": %d}}\', fr.frameNumber, #spr.frames))\n'
+    )
+
+
+def script_add_tag(
+    path: Path, name: str, from_frame: int, to_frame: int, anidir_lua: str
+) -> str:
+    q = lua_quote(name)
+    return (
+        _open_sprite(path)
+        # newTag does not bounds-check its arguments; an out-of-range tag
+        # silently corrupts later exports
+        + _check_frame(to_frame)
+        + "for i = 1, #spr.tags do\n"
+        f"  if spr.tags[i].name == {q} then\n"
+        f'    error("tag already exists: " .. {q})\n'
+        "  end\n"
+        "end\n"
+        f"local tag = spr:newTag({from_frame}, {to_frame})\n"
+        f"tag.name = {q}\n"
+        f"tag.aniDir = {anidir_lua}\n"
+        + _save_sprite(path)
+    )
+
+
+def script_set_frame_duration(path: Path, frame: int, duration_ms: int) -> str:
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + f"spr.frames[{frame}].duration = {duration_ms / 1000!r}\n"
+        + _save_sprite(path)
+    )
+
+
+def script_delete_frame(path: Path, frame: int) -> str:
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + "if #spr.frames == 1 then\n"
+        + '  error("cannot delete the only frame — a sprite needs at least one frame")\n'
+        + "end\n"
+        + f"spr:deleteFrame({frame})\n"
+        + _save_sprite(path)
+        + f'print("{RESULT_MARKER} " .. string.format(\'{{"deleted_frame": %d, "total_frames": %d}}\', {frame}, #spr.frames))\n'
+    )
+
+
+def script_copy_cel(path: Path, from_frame: int, to_frame: int, layer: str | None) -> str:
+    return (
+        _open_sprite(path)
+        + _check_frame(from_frame)
+        + _check_frame(to_frame)
+        + _resolve_layer(layer)
+        + f"local src = layer:cel({from_frame})\n"
+        + "if src == nil then\n"
+        + f'  error("layer \'" .. layer.name .. "\' has no content on frame {from_frame} — nothing to copy")\n'
+        + "end\n"
+        # newCel replaces any existing target cel and deep-copies the image
+        + f"spr:newCel(layer, {to_frame}, src.image, src.position)\n"
+        + _save_sprite(path)
     )
 
 

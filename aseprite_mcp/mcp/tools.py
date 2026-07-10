@@ -113,6 +113,32 @@ def draw_shape(
 
 
 @server.tool()
+def clear_region(
+    path: str,
+    x: int = 0,
+    y: int = 0,
+    width: int = 0,
+    height: int = 0,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Erase a rectangular region back to transparency (raw image clear).
+
+    This is the eraser — draw_shape cannot erase because tool strokes
+    alpha-blend. width/height of 0 extend to the canvas edge (omit all four to
+    wipe the whole layer/frame). Clearing a layer/frame that has no content is
+    an error, not a silent no-op.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    rect = ops.validate_clear_rect(x, y, width, height)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    runner.run_script(lua.script_clear_region(p, rect, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return f"Cleared region on {target}, frame {fr} of {p.name}."
+
+
+@server.tool()
 def add_layer(path: str, name: str) -> str:
     """Add a new transparent layer on top of the stack. Fails if the name is already taken."""
     p = ops.validate_sprite_path(path, must_exist=True)
@@ -133,6 +159,65 @@ def add_frame(path: str, duration_ms: int = 100, mode: str = "duplicate") -> dic
     result = runner.extract_result(runner.run_script(lua.script_add_frame(p, ms, mode)))
     result["duration_ms"] = ms
     return result
+
+
+@server.tool()
+def delete_frame(path: str, frame: int) -> dict:
+    """Delete a 1-based frame; later frames shift down (tags adjust automatically).
+
+    Cannot delete a sprite's only frame.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    fr = ops.validate_frame(frame)
+    return runner.extract_result(runner.run_script(lua.script_delete_frame(p, fr)))
+
+
+@server.tool()
+def copy_cel(path: str, from_frame: int, to_frame: int, layer: str | None = None) -> str:
+    """Copy a layer's pixels from one frame onto another, replacing what was there.
+
+    The re-posing workflow: add_frame(mode='empty'), copy_cel from the previous
+    frame, then edit the copy — the two frames stay independent. Copies within
+    one layer; layer defaults to the bottom layer.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    f, t = ops.validate_copy_frames(from_frame, to_frame)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    runner.run_script(lua.script_copy_cel(p, f, t, layer_name))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return f"Copied {target} content from frame {f} to frame {t} of {p.name}."
+
+
+@server.tool()
+def add_tag(
+    path: str,
+    name: str,
+    from_frame: int,
+    to_frame: int,
+    direction: str = "forward",
+) -> str:
+    """Tag a 1-based frame range as a named animation (e.g. 'walk' over frames 2-4).
+
+    Tags become named animations in spritesheet export metadata; without tags
+    every export collapses into one 'default' animation. direction: 'forward',
+    'reverse', 'pingpong' or 'pingpong_reverse'.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    tag_name = ops.validate_tag_name(name)
+    f, t = ops.validate_tag_range(from_frame, to_frame)
+    anidir = ops.validate_tag_direction(direction)
+    runner.run_script(lua.script_add_tag(p, tag_name, f, t, anidir))
+    return f"Tagged frames {f}-{t} of {p.name} as {tag_name!r} ({direction})."
+
+
+@server.tool()
+def set_frame_duration(path: str, frame: int, duration_ms: int) -> str:
+    """Set how long a frame is shown during animation playback (frame is 1-based)."""
+    p = ops.validate_sprite_path(path, must_exist=True)
+    fr = ops.validate_frame(frame)
+    ms = ops.validate_duration_ms(duration_ms)
+    runner.run_script(lua.script_set_frame_duration(p, fr, ms))
+    return f"Set frame {fr} of {p.name} to {ms}ms."
 
 
 @server.tool()

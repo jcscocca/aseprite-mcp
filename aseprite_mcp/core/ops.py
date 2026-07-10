@@ -201,6 +201,47 @@ def validate_frame(frame) -> int:
     return _int(frame, "frame (1-based)", 1, 65535)
 
 
+def validate_copy_frames(from_frame, to_frame) -> tuple[int, int]:
+    f = _int(from_frame, "from_frame (1-based)", 1, 65535)
+    t = _int(to_frame, "to_frame (1-based)", 1, 65535)
+    if f == t:
+        raise ValueError(f"from_frame and to_frame are both {f} — they must differ")
+    return (f, t)
+
+
+TAG_DIRECTIONS = {
+    "forward": "AniDir.FORWARD",
+    "reverse": "AniDir.REVERSE",
+    "pingpong": "AniDir.PING_PONG",
+    "pingpong_reverse": "AniDir.PING_PONG_REVERSE",
+}
+
+
+def validate_tag_name(name) -> str:
+    if not isinstance(name, str) or not name.strip() or any(c in name for c in "\r\n"):
+        raise ValueError(
+            f"tag name must be a non-empty single-line string, got {name!r}"
+        )
+    return name.strip()
+
+
+def validate_tag_direction(direction) -> str:
+    if direction not in TAG_DIRECTIONS:
+        raise ValueError(
+            f"unknown direction {direction!r}: expected one of "
+            "'forward', 'reverse', 'pingpong', 'pingpong_reverse'"
+        )
+    return TAG_DIRECTIONS[direction]
+
+
+def validate_tag_range(from_frame, to_frame) -> tuple[int, int]:
+    f = _int(from_frame, "from_frame (1-based)", 1, 65535)
+    t = _int(to_frame, "to_frame (1-based)", 1, 65535)
+    if f > t:
+        raise ValueError(f"from_frame ({f}) must be <= to_frame ({t})")
+    return (f, t)
+
+
 def validate_duration_ms(ms) -> int:
     return _int(ms, "duration_ms", 1, MAX_DURATION_MS)
 
@@ -224,6 +265,15 @@ def validate_read_rect(x, y, width, height) -> tuple[int, int, int, int]:
             f"{MAX_READ_AREA} (e.g. 64x64) and read in chunks"
         )
     return (rx, ry, rw, rh)
+
+
+def validate_clear_rect(x, y, width, height) -> tuple[int, int, int, int]:
+    return (
+        _int(x, "x", 0, MAX_CANVAS),
+        _int(y, "y", 0, MAX_CANVAS),
+        _int(width, "width (0 = to canvas edge)", 0, MAX_CANVAS),
+        _int(height, "height (0 = to canvas edge)", 0, MAX_CANVAS),
+    )
 
 
 def resolve_palette(palette) -> list[RGBA] | None:

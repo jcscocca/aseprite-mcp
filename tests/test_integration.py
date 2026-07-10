@@ -173,6 +173,18 @@ def test_add_frame_durations_and_gif_export(tmp_path):
     assert gif.read_bytes()[:4] == b"GIF8"
 
 
+def test_set_frame_duration(tmp_path):
+    spr = str(tmp_path / "dur.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_frame(spr, duration_ms=80)
+    msg = tools.set_frame_duration(spr, frame=1, duration_ms=250)
+    assert "250" in msg
+    info = tools.get_canvas_info(spr)
+    assert [f["duration_ms"] for f in info["frames"]] == [250, 80]
+    with pytest.raises(AsepriteError, match="out of range"):
+        tools.set_frame_duration(spr, frame=9, duration_ms=100)
+
+
 def test_add_empty_frame_and_frame_targeted_drawing(tmp_path):
     spr = str(tmp_path / "empty.ase")
     tools.create_canvas(spr, 4, 4)
@@ -182,6 +194,39 @@ def test_add_empty_frame_and_frame_targeted_drawing(tmp_path):
     img2 = PILImage.open(io.BytesIO(tools.preview(spr, scale=1, frame=2).data)).convert("RGBA")
     assert img2.getpixel((1, 1)) == (0, 0, 255, 255)
     assert img2.getpixel((0, 0))[3] == 0  # frame 2 started empty — no red from frame 1
+
+
+def test_add_tag_named_animations_in_spritesheet(tmp_path):
+    spr = str(tmp_path / "tagged.ase")
+    out = tmp_path / "tagged.png"
+    tools.create_canvas(spr, 8, 8)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr, duration_ms=120)
+    tools.add_frame(spr, duration_ms=120)
+    tools.add_tag(spr, "idle", 1, 1)
+    tools.add_tag(spr, "walk", 2, 3, direction="pingpong")
+    info = tools.get_canvas_info(spr)
+    assert info["tags"] == [
+        {"name": "idle", "from_frame": 1, "to_frame": 1, "direction": "forward"},
+        {"name": "walk", "from_frame": 2, "to_frame": 3, "direction": "pingpong"},
+    ]
+    result = tools.export(spr, str(out), format="spritesheet")
+    anims = {a["name"]: a for a in result["godot_metadata"]["animations"]}
+    assert set(anims) == {"idle", "walk"}
+    assert anims["idle"]["frames"] == [0]
+    assert anims["walk"]["frames"] == [1, 2]
+    assert anims["walk"]["direction"] == "pingpong"
+    assert anims["walk"]["durations_ms"] == [120, 120]
+
+
+def test_add_tag_out_of_range_and_duplicate_fail(tmp_path):
+    spr = str(tmp_path / "tagbad.ase")
+    tools.create_canvas(spr, 4, 4)
+    with pytest.raises(AsepriteError, match="out of range"):
+        tools.add_tag(spr, "walk", 1, 5)
+    tools.add_tag(spr, "walk", 1, 1)
+    with pytest.raises(AsepriteError, match="already exists"):
+        tools.add_tag(spr, "walk", 1, 1)
 
 
 def test_pixels_survive_shape_then_pixel_edits(tmp_path):
@@ -197,6 +242,98 @@ def test_pixels_survive_shape_then_pixel_edits(tmp_path):
     assert img.getpixel((0, 0)) == (255, 0, 0, 255)
     assert img.getpixel((7, 7)) == (0, 0, 255, 255)
     assert img.getpixel((3, 3)) == (0, 255, 0, 255)
+
+
+def test_delete_frame_shifts_later_frames_down(tmp_path):
+    spr = str(tmp_path / "del.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr, duration_ms=80, mode="empty")
+    tools.draw_pixels(spr, [{"x": 1, "y": 1, "color": BLUE}], frame=2)
+    result = tools.delete_frame(spr, frame=1)
+    assert result["total_frames"] == 1
+    info = tools.get_canvas_info(spr)
+    assert [f["duration_ms"] for f in info["frames"]] == [80]
+    px = tools.read_pixels(spr)  # old frame 2 is now frame 1
+    assert px["rows"] == ["....", ".a..", "....", "...."]
+    assert px["legend"]["a"] == BLUE
+    with pytest.raises(AsepriteError, match="only frame"):
+        tools.delete_frame(spr, frame=1)
+
+
+def test_delete_frame_out_of_range_fails(tmp_path):
+    spr = str(tmp_path / "deloob.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_frame(spr)
+    with pytest.raises(AsepriteError, match="out of range"):
+        tools.delete_frame(spr, frame=5)
+
+
+def test_copy_cel_copies_content_independently(tmp_path):
+    spr = str(tmp_path / "copy.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}, {"x": 1, "y": 0, "color": GREEN}])
+    tools.add_frame(spr, mode="empty")
+    tools.copy_cel(spr, from_frame=1, to_frame=2)
+    assert tools.read_pixels(spr, frame=2)["rows"][0] == "ab.."
+    # deep copy: editing the target frame must not touch the source frame
+    tools.draw_pixels(spr, [{"x": 3, "y": 3, "color": BLUE}], frame=2)
+    assert tools.read_pixels(spr, frame=1)["rows"][3] == "...."
+
+
+def test_copy_cel_overwrites_target_and_empty_source_fails(tmp_path):
+    spr = str(tmp_path / "copyover.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr)
+    tools.draw_pixels(spr, [{"x": 2, "y": 2, "color": GREEN}], frame=2)
+    tools.copy_cel(spr, from_frame=1, to_frame=2)  # replaces, not merges
+    assert tools.read_pixels(spr, frame=2)["rows"] == ["a...", "....", "....", "...."]
+    tools.add_layer(spr, "fx")
+    with pytest.raises(AsepriteError, match="nothing to copy"):
+        tools.copy_cel(spr, from_frame=1, to_frame=2, layer="fx")
+
+
+def test_clear_region_erases_to_transparent(tmp_path):
+    spr = str(tmp_path / "clear.ase")
+    out = tmp_path / "clear.png"
+    tools.create_canvas(spr, 8, 8)
+    tools.draw_shape(spr, "rectangle", [[0, 0], [7, 7]], GREEN, filled=True)
+    tools.clear_region(spr, x=2, y=2, width=3, height=3)
+    tools.export(spr, str(out), format="png")
+    img = _rgba(out)
+    assert img.getpixel((2, 2))[3] == 0
+    assert img.getpixel((4, 4))[3] == 0
+    assert img.getpixel((1, 1)) == (0, 255, 0, 255)  # outside the region untouched
+    assert img.getpixel((5, 5)) == (0, 255, 0, 255)
+
+
+def test_clear_region_indexed_mode_restores_transparency(tmp_path):
+    spr = str(tmp_path / "clearix.ase")
+    out = tmp_path / "clearix.png"
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="gameboy")
+    tools.draw_shape(spr, "rectangle", [[0, 0], [3, 3]], "#8bac0f", filled=True)
+    tools.clear_region(spr, x=0, y=0, width=2, height=2)
+    tools.export(spr, str(out), format="png")
+    img = _rgba(out)
+    assert img.getpixel((0, 0))[3] == 0  # cleared back to the transparent index
+    assert img.getpixel((3, 3)) == (0x8B, 0xAC, 0x0F, 255)
+
+
+def test_clear_region_empty_layer_fails(tmp_path):
+    spr = str(tmp_path / "clearempty.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_layer(spr, "fx")
+    with pytest.raises(AsepriteError, match="nothing to clear"):
+        tools.clear_region(spr, layer="fx")
+
+
+def test_clear_region_past_canvas_fails(tmp_path):
+    spr = str(tmp_path / "clearoob.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    with pytest.raises(AsepriteError, match="canvas"):
+        tools.clear_region(spr, x=2, y=0, width=4, height=1)
 
 
 def test_spritesheet_export_with_godot_metadata(tmp_path):

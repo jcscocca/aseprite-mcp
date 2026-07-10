@@ -38,15 +38,20 @@ launches at startup and exits loudly if it doesn't.
 | Tool | Purpose |
 |---|---|
 | `create_canvas` | New sprite: size, color mode (rgb/grayscale/indexed), palette preset (`gameboy`, `pico8`, `sweetie16`) or hex list |
-| `get_canvas_info` | Size, color mode, layers, frames + durations, palette |
+| `get_canvas_info` | Size, color mode, layers, frames + durations, palette, tags |
 | `set_palette` | Replace the palette with 1–256 hex colors |
 | `draw_pixels` | Batched pixels `[{x, y, color}]` on a layer/frame |
 | `draw_shape` | Line, rectangle, ellipse (optionally filled), flood fill |
+| `clear_region` | Erase a rectangle back to transparency (raw image clear — the eraser `draw_shape` can't be) |
 | `add_layer` | New named layer (duplicate names rejected) |
 | `add_frame` | Append a frame (duplicate of last, or empty) with duration |
+| `set_frame_duration` | Change how long an existing frame plays |
+| `delete_frame` | Remove a frame (later frames shift down; the last frame is protected) |
+| `copy_cel` | Copy a layer's pixels from one frame onto another (re-posing without redrawing) |
+| `add_tag` | Name a frame range as an animation (`walk`, frames 2–4, forward/reverse/pingpong) — becomes a named animation in spritesheet metadata |
 | `preview` | Nearest-neighbor-scaled PNG of a frame, **returned as an image** so the agent sees its work; `grid=N` overlays magenta coordinate lines every N pixels |
 | `read_pixels` | Exact pixel values for a region as a color legend + character grid — ground truth when placement matters (capped at 4096 px per read) |
-| `export` | `png`, animated `gif`, or `spritesheet` (PNG atlas + Godot-oriented JSON: frame rects, durations, animations) |
+| `export` | `png`, animated `gif`, or `spritesheet` (PNG atlas + Godot-oriented JSON: frame rects, durations, animations from tags) |
 
 The intended loop: draw a few things, `preview`, correct course, repeat, then
 `export`. A 16x16 slime with a 3-frame idle animation, drawn entirely through
@@ -71,8 +76,10 @@ their bounds (pixels are drawn onto full-canvas cels so `putPixel` can't
 silently no-op), indexed-mode colors are resolved against the sprite's own
 palette in Lua (batch mode's "current palette" is not the sprite's), and
 `newFrame(n)` returns the frame at position `n` rather than the new copy.
-Erasing: `draw_pixels` sets pixels raw, so `'#00000000'` erases; `draw_shape`
-strokes alpha-blend and cannot erase.
+Erasing: `draw_pixels` sets pixels raw, so `'#00000000'` erases, and
+`clear_region` clears rectangles at the image level; `draw_shape` strokes
+alpha-blend and cannot erase. `Sprite:newTag` does no bounds checking, so tag
+ranges are validated in Lua before the tag is created.
 
 ## Development
 

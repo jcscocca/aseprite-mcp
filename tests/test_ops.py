@@ -189,6 +189,47 @@ def test_scale_range():
             ops.validate_scale(bad)
 
 
+# --- tags ---
+
+
+def test_tag_name_rules():
+    assert ops.validate_tag_name("  walk ") == "walk"
+    with pytest.raises(ValueError, match="tag name"):
+        ops.validate_tag_name("")
+    with pytest.raises(ValueError, match="tag name"):
+        ops.validate_tag_name("a\nb")
+
+
+def test_tag_direction_maps_to_anidir():
+    assert ops.validate_tag_direction("forward") == "AniDir.FORWARD"
+    assert ops.validate_tag_direction("reverse") == "AniDir.REVERSE"
+    assert ops.validate_tag_direction("pingpong") == "AniDir.PING_PONG"
+    assert ops.validate_tag_direction("pingpong_reverse") == "AniDir.PING_PONG_REVERSE"
+
+
+def test_tag_direction_invalid_lists_options():
+    with pytest.raises(ValueError, match="forward.*reverse.*pingpong"):
+        ops.validate_tag_direction("bounce")
+
+
+def test_tag_range():
+    assert ops.validate_tag_range(1, 4) == (1, 4)
+    assert ops.validate_tag_range(2, 2) == (2, 2)
+    with pytest.raises(ValueError, match="from_frame"):
+        ops.validate_tag_range(4, 1)
+    with pytest.raises(ValueError, match="1-based"):
+        ops.validate_tag_range(0, 2)
+
+
+def test_copy_frames_must_differ():
+    assert ops.validate_copy_frames(1, 3) == (1, 3)
+    assert ops.validate_copy_frames(3, 1) == (3, 1)  # copying backward is fine
+    with pytest.raises(ValueError, match="differ"):
+        ops.validate_copy_frames(2, 2)
+    with pytest.raises(ValueError, match="1-based"):
+        ops.validate_copy_frames(0, 1)
+
+
 # --- palettes ---
 
 
@@ -276,6 +317,20 @@ def test_read_rect_negative_origin_fails():
 def test_read_rect_area_cap():
     with pytest.raises(ValueError, match="4096"):
         ops.validate_read_rect(0, 0, 65, 64)
+
+
+def test_clear_rect_explicit_and_zero_to_edge():
+    assert ops.validate_clear_rect(2, 3, 10, 4) == (2, 3, 10, 4)
+    assert ops.validate_clear_rect(0, 0, 0, 0) == (0, 0, 0, 0)
+
+
+def test_clear_rect_has_no_area_cap():
+    assert ops.validate_clear_rect(0, 0, 500, 500) == (0, 0, 500, 500)
+
+
+def test_clear_rect_negative_origin_fails():
+    with pytest.raises(ValueError, match="x"):
+        ops.validate_clear_rect(-1, 0, 4, 4)
 
 
 def test_grid_zero_is_off_and_range_enforced():
