@@ -156,6 +156,96 @@ def draw_grid(
 
 
 @server.tool()
+def flip(
+    path: str,
+    direction: str,
+    x: int = 0,
+    y: int = 0,
+    width: int = 0,
+    height: int = 0,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Flip a region in place: direction 'horizontal' (left-right) or 'vertical'
+    (top-bottom). width/height of 0 extend to the canvas edge (omit all four
+    to flip the whole layer/frame).
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    fliptype = ops.validate_flip_direction(direction)
+    rect = ops.validate_clear_rect(x, y, width, height)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    runner.run_script(lua.script_flip(p, fliptype, rect, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return f"Flipped {direction} on {target}, frame {fr} of {p.name}."
+
+
+@server.tool()
+def mirror(
+    path: str,
+    source: str = "left",
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Complete a symmetric sprite: copy the source half ('left', 'right',
+    'top' or 'bottom') flipped onto the other half, replacing what was there.
+    The draw-half-then-mirror workflow — draw the left half, mirror(source='left'),
+    done. On odd dimensions the center row/column stays put.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    src = ops.validate_mirror_source(source)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    runner.run_script(lua.script_mirror(p, src, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return f"Mirrored the {src} half onto the other side on {target}, frame {fr} of {p.name}."
+
+
+@server.tool()
+def shift(
+    path: str,
+    dx: int = 0,
+    dy: int = 0,
+    wrap: bool = False,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Translate a layer/frame's pixels by (dx, dy) — positive dx moves right,
+    positive dy moves down. Pixels pushed past the edge are dropped, or carried
+    to the opposite side with wrap=True (handy for scrolling backgrounds).
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    sdx, sdy = ops.validate_shift(dx, dy)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    runner.run_script(lua.script_shift(p, sdx, sdy, wrap, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    mode = "wrapped" if wrap else "shifted"
+    return f"{mode.capitalize()} {target} by ({sdx}, {sdy}) on frame {fr} of {p.name}."
+
+
+@server.tool()
+def rotate(
+    path: str,
+    degrees: int,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Rotate a layer/frame's pixels clockwise by 90, 180 or 270 degrees.
+
+    90/270 swap width and height, so they need a square canvas; 180 works on
+    any canvas.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    deg = ops.validate_rotation(degrees)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    runner.run_script(lua.script_rotate(p, deg, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return f"Rotated {target} {deg} degrees clockwise on frame {fr} of {p.name}."
+
+
+@server.tool()
 def clear_region(
     path: str,
     x: int = 0,

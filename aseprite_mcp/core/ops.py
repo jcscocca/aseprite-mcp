@@ -195,6 +195,44 @@ def validate_shape(shape, points, color, *, filled: bool, tolerance: int) -> Sha
     return ShapeOp(tool=tools[shape], points=pts, color=rgba, tolerance=tolerance)
 
 
+FLIP_DIRECTIONS = {
+    "horizontal": "FlipType.HORIZONTAL",
+    "vertical": "FlipType.VERTICAL",
+}
+MIRROR_SOURCES = ("left", "right", "top", "bottom")
+ROTATIONS = (90, 180, 270)
+
+
+def validate_flip_direction(direction) -> str:
+    if direction not in FLIP_DIRECTIONS:
+        raise ValueError(
+            f"unknown direction {direction!r}: expected 'horizontal' or 'vertical'"
+        )
+    return FLIP_DIRECTIONS[direction]
+
+
+def validate_mirror_source(source) -> str:
+    if source not in MIRROR_SOURCES:
+        raise ValueError(
+            f"unknown source {source!r}: expected one of 'left', 'right', 'top', 'bottom'"
+        )
+    return source
+
+
+def validate_shift(dx, dy) -> tuple[int, int]:
+    x = _int(dx, "dx", -MAX_CANVAS, MAX_CANVAS)
+    y = _int(dy, "dy", -MAX_CANVAS, MAX_CANVAS)
+    if x == 0 and y == 0:
+        raise ValueError("dx and dy are both 0 — nothing to shift")
+    return (x, y)
+
+
+def validate_rotation(degrees) -> int:
+    if isinstance(degrees, bool) or degrees not in ROTATIONS:
+        raise ValueError(f"rotation must be 90, 180 or 270 degrees, got {degrees!r}")
+    return degrees
+
+
 def validate_replace_colors(from_color, to_color) -> tuple[RGBA, RGBA]:
     f = parse_color(from_color)
     t = parse_color(to_color)

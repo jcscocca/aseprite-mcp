@@ -135,6 +135,76 @@ def test_flood_fill_replaces_contiguous_region(tmp_path):
     assert img.getpixel((0, 0))[3] == 0  # outside the region untouched
 
 
+def test_flip_horizontal_region_then_whole(tmp_path):
+    spr = str(tmp_path / "flip.ase")
+    tools.create_canvas(spr, 4, 1)
+    tools.draw_grid(spr, rows=["rg.."], legend={"r": RED, "g": GREEN})
+    tools.flip(spr, "horizontal", x=0, y=0, width=2, height=1)
+    px = tools.read_pixels(spr)
+    assert px["rows"] == ["ab.."]
+    assert (px["legend"]["a"], px["legend"]["b"]) == (GREEN, RED)
+    tools.flip(spr, "horizontal")  # whole canvas
+    px = tools.read_pixels(spr)
+    assert px["rows"] == ["..ab"]
+    assert (px["legend"]["a"], px["legend"]["b"]) == (RED, GREEN)
+
+
+def test_flip_vertical(tmp_path):
+    spr = str(tmp_path / "flipv.ase")
+    tools.create_canvas(spr, 1, 2)
+    tools.draw_grid(spr, rows=["r", "."], legend={"r": RED})
+    tools.flip(spr, "vertical")
+    assert tools.read_pixels(spr)["rows"] == [".", "a"]
+
+
+def test_mirror_completes_left_half(tmp_path):
+    spr = str(tmp_path / "mirror.ase")
+    tools.create_canvas(spr, 4, 2)
+    tools.draw_grid(spr, rows=["r.", "rg"], legend={"r": RED, "g": GREEN})
+    tools.mirror(spr, source="left")
+    px = tools.read_pixels(spr)
+    assert px["rows"] == ["a..a", "abba"]
+    assert (px["legend"]["a"], px["legend"]["b"]) == (RED, GREEN)
+
+
+def test_shift_drops_offcanvas_pixels(tmp_path):
+    spr = str(tmp_path / "shift.ase")
+    tools.create_canvas(spr, 2, 2)
+    tools.draw_grid(spr, rows=["r.", ".g"], legend={"r": RED, "g": GREEN})
+    tools.shift(spr, dx=1)
+    assert tools.read_pixels(spr)["rows"] == [".a", ".."]
+    with pytest.raises(AsepriteError, match="off the canvas"):
+        tools.shift(spr, dx=2)
+
+
+def test_shift_wraps_when_asked(tmp_path):
+    spr = str(tmp_path / "shiftwrap.ase")
+    tools.create_canvas(spr, 2, 2)
+    tools.draw_grid(spr, rows=["r.", ".g"], legend={"r": RED, "g": GREEN})
+    tools.shift(spr, dx=1, wrap=True)
+    px = tools.read_pixels(spr)
+    assert px["rows"] == [".a", "b."]
+    assert px["legend"] == {".": "transparent", "a": RED, "b": GREEN}
+
+
+def test_rotate_90_180_and_square_guard(tmp_path):
+    spr = str(tmp_path / "rot.ase")
+    tools.create_canvas(spr, 2, 2)
+    tools.draw_grid(spr, rows=["rg", ".."], legend={"r": RED, "g": GREEN})
+    tools.rotate(spr, 90)  # clockwise: top row becomes the right column
+    assert tools.read_pixels(spr)["rows"] == [".a", ".b"]
+    tools.rotate(spr, 270)  # undo
+    tools.rotate(spr, 180)
+    px = tools.read_pixels(spr)
+    assert px["rows"] == ["..", "ab"]
+    assert (px["legend"]["a"], px["legend"]["b"]) == (GREEN, RED)
+    wide = str(tmp_path / "rotwide.ase")
+    tools.create_canvas(wide, 4, 2)
+    tools.draw_pixels(wide, [{"x": 0, "y": 0, "color": RED}])
+    with pytest.raises(AsepriteError, match="square"):
+        tools.rotate(wide, 90)
+
+
 def test_replace_color_swaps_matches_in_region_and_reports_count(tmp_path):
     spr = str(tmp_path / "swap.ase")
     tools.create_canvas(spr, 4, 2)

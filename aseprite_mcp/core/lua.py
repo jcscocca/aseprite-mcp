@@ -307,16 +307,153 @@ def script_clear_region(
         + '  error(string.format("clear region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
         + "    rx, ry, rw, rh, spr.width, spr.height))\n"
         + "end\n"
-        + f"local cel = layer:cel({frame})\n"
-        + "if cel == nil then\n"
-        + f'  error("layer \'" .. layer.name .. "\' has no content on frame {frame} — nothing to clear")\n'
+        # Image:clear rects are image-local (offset by the cel position), so the
+        # helper's full-canvas normalization makes canvas coords apply directly.
+        + _require_full_canvas_cel(frame, "clear")
+        + "img:clear(Rectangle(rx, ry, rw, rh))\n"
+        + _save_sprite(path)
+    )
+
+
+def _require_full_canvas_cel(frame: int, action: str) -> str:
+    """Bind `cel`/`img` to a full-canvas copy of the frame's cel, failing on empty."""
+    return (
+        f"local cel = layer:cel({frame})\n"
+        "if cel == nil then\n"
+        f'  error("layer \'" .. layer.name .. "\' has no content on frame {frame} — nothing to {action}")\n'
+        "end\n"
+        "local full = Image(spr.width, spr.height, spr.colorMode)\n"
+        "full:drawImage(cel.image, cel.position)\n"
+        f"cel = spr:newCel(layer, {frame}, full, Point(0, 0))\n"
+        "local img = cel.image\n"
+    )
+
+
+def script_flip(
+    path: Path,
+    fliptype_lua: str,
+    rect: tuple[int, int, int, int],
+    layer: str | None,
+    frame: int,
+) -> str:
+    x, y, w, h = rect
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + _resolve_layer(layer)
+        + f"local rx, ry, rw, rh = {x}, {y}, {w}, {h}\n"
+        + "if rw == 0 then rw = spr.width - rx end\n"
+        + "if rh == 0 then rh = spr.height - ry end\n"
+        + "if rw < 1 or rh < 1 or rx + rw > spr.width or ry + rh > spr.height then\n"
+        + '  error(string.format("flip region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
+        + "    rx, ry, rw, rh, spr.width, spr.height))\n"
         + "end\n"
-        # Image:clear rects are image-local (offset by the cel position), so
-        # normalize to a full-canvas cel first; canvas coords then apply directly.
-        + "local full = Image(spr.width, spr.height, spr.colorMode)\n"
-        + "full:drawImage(cel.image, cel.position)\n"
-        + f"cel = spr:newCel(layer, {frame}, full, Point(0, 0))\n"
-        + "cel.image:clear(Rectangle(rx, ry, rw, rh))\n"
+        + _require_full_canvas_cel(frame, "flip")
+        # drawImage blends, so clear the region before blitting the flipped copy
+        + "local tmp = Image(img, Rectangle(rx, ry, rw, rh))\n"
+        + f"tmp:flip({fliptype_lua})\n"
+        + "img:clear(Rectangle(rx, ry, rw, rh))\n"
+        + "img:drawImage(tmp, Point(rx, ry))\n"
+        + _save_sprite(path)
+    )
+
+
+def script_mirror(path: Path, source: str, layer: str | None, frame: int) -> str:
+    if source in ("left", "right"):
+        fliptype = "FlipType.HORIZONTAL"
+        size = "local hw = math.floor((w + 1) / 2)\n"
+        if source == "left":
+            crop, clear, dest = "Rectangle(0, 0, hw, h)", "Rectangle(w - hw, 0, hw, h)", "Point(w - hw, 0)"
+        else:
+            crop, clear, dest = "Rectangle(w - hw, 0, hw, h)", "Rectangle(0, 0, hw, h)", "Point(0, 0)"
+    else:
+        fliptype = "FlipType.VERTICAL"
+        size = "local hh = math.floor((h + 1) / 2)\n"
+        if source == "top":
+            crop, clear, dest = "Rectangle(0, 0, w, hh)", "Rectangle(0, h - hh, w, hh)", "Point(0, h - hh)"
+        else:
+            crop, clear, dest = "Rectangle(0, h - hh, w, hh)", "Rectangle(0, 0, w, hh)", "Point(0, 0)"
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + _resolve_layer(layer)
+        + _require_full_canvas_cel(frame, "mirror")
+        + "local w, h = spr.width, spr.height\n"
+        + size
+        + f"local half = Image(img, {crop})\n"
+        + f"half:flip({fliptype})\n"
+        + f"img:clear({clear})\n"
+        + f"img:drawImage(half, {dest})\n"
+        + _save_sprite(path)
+    )
+
+
+def script_shift(
+    path: Path, dx: int, dy: int, wrap: bool, layer: str | None, frame: int
+) -> str:
+    if wrap:
+        # Lua % floors toward the divisor's sign, so sx/sy land in [0, w)/[0, h);
+        # four tiled copies cover the wrap seam in both axes
+        blit = (
+            f"local sx, sy = {dx} % w, {dy} % h\n"
+            "shifted:drawImage(img, Point(sx, sy))\n"
+            "shifted:drawImage(img, Point(sx - w, sy))\n"
+            "shifted:drawImage(img, Point(sx, sy - h))\n"
+            "shifted:drawImage(img, Point(sx - w, sy - h))\n"
+        )
+        guard = ""
+    else:
+        blit = f"shifted:drawImage(img, Point({dx}, {dy}))\n"
+        guard = (
+            f"if math.abs({dx}) >= w or math.abs({dy}) >= h then\n"
+            f'  error(string.format("shift of ({dx},{dy}) would push every pixel off the canvas '
+            '(%dx%d) — use clear_region to empty it, or wrap=true", w, h))\n'
+            "end\n"
+        )
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + _resolve_layer(layer)
+        + _require_full_canvas_cel(frame, "shift")
+        + "local w, h = spr.width, spr.height\n"
+        + guard
+        + "local shifted = Image(w, h, spr.colorMode)\n"
+        + blit
+        + f"spr:newCel(layer, {frame}, shifted, Point(0, 0))\n"
+        + _save_sprite(path)
+    )
+
+
+def script_rotate(path: Path, degrees: int, layer: str | None, frame: int) -> str:
+    puts = {
+        90: "rot:drawPixel(h - 1 - y, x, img:getPixel(x, y))",
+        180: "rot:drawPixel(w - 1 - x, h - 1 - y, img:getPixel(x, y))",
+        270: "rot:drawPixel(y, w - 1 - x, img:getPixel(x, y))",
+    }
+    guard = (
+        (
+            "if spr.width ~= spr.height then\n"
+            f'  error(string.format("rotating {degrees} degrees swaps width and height — '
+            'needs a square canvas, got %dx%d (180 works on any canvas)", spr.width, spr.height))\n'
+            "end\n"
+        )
+        if degrees in (90, 270)
+        else ""
+    )
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + guard
+        + _resolve_layer(layer)
+        + _require_full_canvas_cel(frame, "rotate")
+        + "local w, h = spr.width, spr.height\n"
+        + "local rot = Image(w, h, spr.colorMode)\n"
+        + "for y = 0, h - 1 do\n"
+        + "  for x = 0, w - 1 do\n"
+        + f"    {puts[degrees]}\n"
+        + "  end\n"
+        + "end\n"
+        + f"spr:newCel(layer, {frame}, rot, Point(0, 0))\n"
         + _save_sprite(path)
     )
 
@@ -342,14 +479,7 @@ def script_replace_color(
         + '  error(string.format("replace region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
         + "    rx, ry, rw, rh, spr.width, spr.height))\n"
         + "end\n"
-        + f"local cel = layer:cel({frame})\n"
-        + "if cel == nil then\n"
-        + f'  error("layer \'" .. layer.name .. "\' has no content on frame {frame} — nothing to replace")\n'
-        + "end\n"
-        + "local full = Image(spr.width, spr.height, spr.colorMode)\n"
-        + "full:drawImage(cel.image, cel.position)\n"
-        + f"cel = spr:newCel(layer, {frame}, full, Point(0, 0))\n"
-        + "local img = cel.image\n"
+        + _require_full_canvas_cel(frame, "replace")
         # a 1x1 probe renders both colors in the sprite's own mode, giving the
         # exact raw values to compare and write — same semantics in every mode
         + "local probe = Image(1, 1, spr.colorMode)\n"

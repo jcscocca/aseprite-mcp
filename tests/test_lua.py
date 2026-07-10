@@ -110,6 +110,43 @@ def test_draw_shape_fill_script_has_tolerance_and_bounds_check():
     assert "out of bounds" in s
 
 
+def test_flip_script_crops_flips_and_blits():
+    s = lua.script_flip(SPR, "FlipType.HORIZONTAL", rect=(0, 0, 0, 0), layer=None, frame=1)
+    assert "Image(img, Rectangle(rx, ry, rw, rh))" in s  # crop-copy of the region
+    assert "flip(FlipType.HORIZONTAL)" in s
+    assert ":clear(Rectangle(" in s  # drawImage blends, so clear before blitting back
+    assert "nothing to flip" in s
+    assert "past the canvas" in s
+    assert "saveAs" in s
+
+
+def test_mirror_script_flips_source_half_onto_dest():
+    s = lua.script_mirror(SPR, "left", layer=None, frame=1)
+    assert "FlipType.HORIZONTAL" in s
+    assert "nothing to mirror" in s
+    assert "saveAs" in s
+    t = lua.script_mirror(SPR, "top", layer=None, frame=1)
+    assert "FlipType.VERTICAL" in t
+
+
+def test_shift_script_wrap_and_full_clear_guard():
+    s = lua.script_shift(SPR, 1, -2, wrap=False, layer=None, frame=1)
+    assert "off the canvas" in s  # a shift >= canvas size would silently blank the cel
+    assert "nothing to shift" in s
+    assert "saveAs" in s
+    w = lua.script_shift(SPR, 1, 0, wrap=True, layer=None, frame=1)
+    assert w.count("drawImage") >= 4  # four tiled copies cover the wrap seam
+
+
+def test_rotate_script_square_guard_for_quarter_turns():
+    s = lua.script_rotate(SPR, 90, layer=None, frame=1)
+    assert "square" in s  # 90/270 swap dimensions, so the canvas must be square
+    assert "getPixel" in s
+    assert "nothing to rotate" in s
+    t = lua.script_rotate(SPR, 180, layer=None, frame=1)
+    assert "square" not in t  # 180 keeps dimensions — any canvas
+
+
 def test_replace_color_script_probes_mode_correct_values():
     s = lua.script_replace_color(
         SPR, RGBA(255, 0, 0), RGBA(0, 0, 255), rect=(0, 0, 0, 0), layer=None, frame=1

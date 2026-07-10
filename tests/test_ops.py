@@ -216,6 +216,38 @@ def test_grid_pixels_empty_rows_fail():
         ops.validate_grid_pixels([""], {"a": "#000"}, 0, 0)
 
 
+# --- transforms ---
+
+
+def test_flip_direction_maps_to_fliptype():
+    assert ops.validate_flip_direction("horizontal") == "FlipType.HORIZONTAL"
+    assert ops.validate_flip_direction("vertical") == "FlipType.VERTICAL"
+    with pytest.raises(ValueError, match="horizontal.*vertical"):
+        ops.validate_flip_direction("diagonal")
+
+
+def test_mirror_source_set():
+    for s in ("left", "right", "top", "bottom"):
+        assert ops.validate_mirror_source(s) == s
+    with pytest.raises(ValueError, match="left.*right.*top.*bottom"):
+        ops.validate_mirror_source("center")
+
+
+def test_shift_deltas():
+    assert ops.validate_shift(1, -2) == (1, -2)
+    with pytest.raises(ValueError, match="both 0"):
+        ops.validate_shift(0, 0)
+    with pytest.raises(ValueError, match="dx"):
+        ops.validate_shift("1", 0)
+
+
+def test_rotation_degrees():
+    assert ops.validate_rotation(90) == 90
+    assert ops.validate_rotation(270) == 270
+    with pytest.raises(ValueError, match="90"):
+        ops.validate_rotation(45)
+
+
 # --- replace color ---
 
 

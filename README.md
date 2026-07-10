@@ -44,6 +44,10 @@ verifies the binary launches at startup and exits loudly if it doesn't.
 | `draw_pixels` | Batched pixels `[{x, y, color}]` on a layer/frame |
 | `draw_shape` | Line, rectangle, ellipse (optionally filled), flood fill |
 | `replace_color` | Swap every exact-match pixel of one color for another (raw, no blending) within an optional rect — reports how many pixels changed |
+| `flip` | Flip a region (or the whole layer/frame) in place, horizontally or vertically |
+| `mirror` | Complete a symmetric sprite: copy one half flipped onto the other (`source='left'` finishes a half-drawn sprite) |
+| `shift` | Translate a layer/frame by (dx, dy); off-canvas pixels drop, or wrap with `wrap=True` |
+| `rotate` | Rotate a layer/frame clockwise 90/180/270° (quarter turns need a square canvas) |
 | `clear_region` | Erase a rectangle back to transparency (raw image clear — the eraser; `draw_shape` rejects transparent colors) |
 | `add_layer` | New named layer (duplicate names rejected) |
 | `delete_layer` / `rename_layer` | Layer lifecycle (the last layer is protected; renames collision-checked case-insensitively) |
