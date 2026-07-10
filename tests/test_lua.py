@@ -110,6 +110,22 @@ def test_draw_shape_fill_script_has_tolerance_and_bounds_check():
     assert "out of bounds" in s
 
 
+def test_replace_color_script_probes_mode_correct_values():
+    s = lua.script_replace_color(
+        SPR, RGBA(255, 0, 0), RGBA(0, 0, 255), rect=(0, 0, 0, 0), layer=None, frame=1
+    )
+    # a 1x1 probe image renders both colors in the sprite's own color mode, so
+    # matching works identically in rgb/indexed/grayscale
+    assert "Image(1, 1, spr.colorMode)" in s
+    assert "amcp_color(255, 0, 0, 255)" in s
+    assert "amcp_color(0, 0, 255, 255)" in s
+    assert "getPixel" in s
+    assert '"replaced"' in s
+    assert "nothing to replace" in s  # empty cel is a loud error
+    assert "past the canvas" in s
+    assert "saveAs" in s
+
+
 def test_set_palette_script():
     s = lua.script_set_palette(SPR, [RGBA(1, 2, 3)])
     assert "spr:setPalette(pal)" in s
@@ -154,6 +170,31 @@ def test_add_tag_script():
     # newTag itself does no bounds checking, so the script must
     assert "frame 4 out of range" in s or "#spr.frames" in s
     assert "already exists" in s  # duplicate names would collide as animations
+    assert "saveAs" in s
+
+
+def test_delete_tag_script():
+    s = lua.script_delete_tag(SPR, "walk")
+    assert "spr:deleteTag(" in s
+    assert "tag not found" in s
+    assert "table.concat" in s  # error lists the existing tag names
+    assert "saveAs" in s
+
+
+def test_delete_layer_script_guards_last_layer():
+    s = lua.script_delete_layer(SPR, "body")
+    assert 'spr.layers["body"]' in s
+    assert "spr:deleteLayer(layer)" in s
+    assert "the only layer" in s
+    assert "saveAs" in s
+
+
+def test_rename_layer_script_checks_collisions():
+    s = lua.script_rename_layer(SPR, "body", "torso")
+    assert 'spr.layers["body"]' in s
+    assert 'layer.name = "torso"' in s
+    assert "already exists" in s
+    assert "string.lower" in s  # collision check is case-insensitive, excluding self
     assert "saveAs" in s
 
 
@@ -218,6 +259,22 @@ def test_export_flat_reports_nonforward_tags():
     assert "pingpong" in s
 
 
+def test_export_flat_scale_resizes_in_memory_only():
+    s = lua.script_export_flat(SPR, Path("/tmp/out.gif"), scale=4)
+    assert "spr:resize(spr.width * 4, spr.height * 4)" in s  # nearest-neighbor by default
+    assert "saveAs" not in s.replace("saveCopyAs", "")  # resized sprite never saved back
+    d = lua.script_export_flat(SPR, Path("/tmp/out.gif"))
+    assert "resize" not in d
+
+
+def test_export_spritesheet_scale():
+    s = lua.script_export_spritesheet(
+        SPR, Path("/tmp/sheet.png"), Path("/tmp/sheet.raw.json"),
+        sheet_type="rows", columns=0, padding=0, scale=2,
+    )
+    assert "spr:resize(spr.width * 2, spr.height * 2)" in s
+
+
 def test_export_spritesheet_script():
     s = lua.script_export_spritesheet(
         SPR, Path("/tmp/sheet.png"), Path("/tmp/sheet.raw.json"),
@@ -256,6 +313,14 @@ def test_read_pixels_script_builds_legend_grid():
     assert "saveAs" not in s  # read-only: never writes the sprite
 
 
+def test_read_pixels_layer_isolation():
+    s = lua.script_read_pixels(SPR, rect=(0, 0, 0, 0), frame=1, layer="body")
+    assert 'spr.layers["body"]' in s
+    assert "layer:cel(1)" in s
+    assert "drawSprite" not in s  # the layer's own cel, not the composite
+    assert "layer not found" in s
+
+
 def test_read_pixels_zero_rect_resolves_to_canvas_in_lua():
     s = lua.script_read_pixels(SPR, rect=(0, 0, 0, 0), frame=1)
     assert "spr.width" in s and "spr.height" in s
@@ -285,6 +350,13 @@ def test_preview_script_grid_overlay():
     assert "Color{ r=255, g=0, b=255, a=255 }" in s  # magenta lines
     assert "64" in s  # line spacing = grid * scale
     assert "drawPixel" in s
+
+
+def test_preview_all_frames_contact_sheet():
+    s = lua.script_preview(SPR, Path("/tmp/p.png"), scale=8, frame=1, all_frames=True)
+    assert "#spr.frames" in s
+    assert "drawSprite(spr, i" in s  # one tile per frame, 1px gap between
+    assert "4096" in s  # size guard applies to the whole strip
 
 
 def test_preview_script_no_grid_by_default():

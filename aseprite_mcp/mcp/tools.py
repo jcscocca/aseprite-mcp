@@ -183,12 +183,64 @@ def clear_region(
 
 
 @server.tool()
+def replace_color(
+    path: str,
+    from_color: str,
+    to_color: str,
+    x: int = 0,
+    y: int = 0,
+    width: int = 0,
+    height: int = 0,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Replace every exact-match pixel of one color with another (raw swap, no blending).
+
+    Matches from_color as rendered in the sprite's color mode; to_color of
+    '#00000000' erases the matched pixels. width/height of 0 extend to the
+    canvas edge. Reports how many pixels changed; replacing on an empty
+    layer/frame is an error.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    f, t = ops.validate_replace_colors(from_color, to_color)
+    rect = ops.validate_clear_rect(x, y, width, height)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    out = runner.run_script(lua.script_replace_color(p, f, t, rect, layer_name, fr))
+    n = runner.extract_result(out)["replaced"]
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    msg = f"Replaced {n} pixel(s) of {f.hex()} with {t.hex()} on {target}, frame {fr} of {p.name}."
+    if n == 0:
+        msg += " (from_color was not found in the region.)"
+    return msg + _snap_note(out)
+
+
+@server.tool()
 def add_layer(path: str, name: str) -> str:
     """Add a new transparent layer on top of the stack. Fails if the name is already taken."""
     p = ops.validate_sprite_path(path, must_exist=True)
     layer_name = ops.validate_layer_name(name)
     runner.run_script(lua.script_add_layer(p, layer_name))
     return f"Added layer {layer_name!r} on top of the stack in {p.name}."
+
+
+@server.tool()
+def delete_layer(path: str, name: str) -> str:
+    """Delete a layer and all its cels. Cannot delete a sprite's only layer."""
+    p = ops.validate_sprite_path(path, must_exist=True)
+    layer_name = ops.validate_layer_name(name)
+    runner.run_script(lua.script_delete_layer(p, layer_name))
+    return f"Deleted layer {layer_name!r} from {p.name}."
+
+
+@server.tool()
+def rename_layer(path: str, name: str, new_name: str) -> str:
+    """Rename a layer. Fails if another layer already has the new name."""
+    p = ops.validate_sprite_path(path, must_exist=True)
+    old = ops.validate_layer_name(name)
+    new = ops.validate_layer_name(new_name)
+    runner.run_script(lua.script_rename_layer(p, old, new))
+    return f"Renamed layer {old!r} to {new!r} in {p.name}."
 
 
 @server.tool()
@@ -255,6 +307,15 @@ def add_tag(
 
 
 @server.tool()
+def delete_tag(path: str, name: str) -> str:
+    """Delete a tag by name — the frames stay; only the named animation range goes."""
+    p = ops.validate_sprite_path(path, must_exist=True)
+    tag_name = ops.validate_tag_name(name)
+    runner.run_script(lua.script_delete_tag(p, tag_name))
+    return f"Deleted tag {tag_name!r} from {p.name}."
+
+
+@server.tool()
 def set_frame_duration(path: str, frame: int, duration_ms: int) -> str:
     """Set how long a frame is shown during animation playback (frame is 1-based)."""
     p = ops.validate_sprite_path(path, must_exist=True)
@@ -265,22 +326,37 @@ def set_frame_duration(path: str, frame: int, duration_ms: int) -> str:
 
 
 @server.tool()
-def preview(path: str, scale: int = 8, frame: int = 1, grid: int = 0) -> MCPImage:
+def preview(
+    path: str,
+    scale: int = 8,
+    frame: int = 1,
+    grid: int = 0,
+    all_frames: bool = False,
+) -> MCPImage:
     """Render a frame as a nearest-neighbor-scaled PNG and return it as an image.
 
     Call this after every few edits to see the current state of the art and
     correct course. scale=8 turns a 16x16 sprite into a readable 128x128 image.
     grid=N overlays magenta lines every N source pixels (grid=1 outlines every
-    pixel) so you can count exact coordinates; 0 = off.
+    pixel) so you can count exact coordinates; 0 = off. all_frames=True renders
+    every frame side by side as a contact sheet (frame is ignored) — one look
+    at a whole animation.
     """
     p = ops.validate_sprite_path(path, must_exist=True)
     s = ops.validate_scale(scale)
     fr = ops.validate_frame(frame)
     g = ops.validate_grid(grid)
+    if all_frames and g > 0:
+        raise ValueError(
+            "grid coordinates are per-frame — grid overlay is not supported "
+            "with all_frames=True"
+        )
     fd, out_png = tempfile.mkstemp(suffix=".png", prefix="aseprite_mcp_preview_")
     os.close(fd)
     try:
-        runner.run_script(lua.script_preview(p, Path(out_png), s, fr, grid=g))
+        runner.run_script(
+            lua.script_preview(p, Path(out_png), s, fr, grid=g, all_frames=all_frames)
+        )
         data = Path(out_png).read_bytes()
     finally:
         os.unlink(out_png)
@@ -297,6 +373,7 @@ def read_pixels(
     width: int = 0,
     height: int = 0,
     frame: int = 1,
+    layer: str | None = None,
 ) -> dict:
     """Read back rendered pixels as a color legend + character grid — exact ground
     truth for what a region looks like (use it to verify placement or debug a
@@ -305,11 +382,19 @@ def read_pixels(
     Returns {'legend': {'.': 'transparent', 'a': '#rrggbb', ...}, 'rows': [...]},
     one string per pixel row. width/height of 0 extend to the canvas edge; regions
     are capped at 4096 pixels (e.g. 64x64) — read larger sprites in chunks.
+    Reads the composited frame by default; pass layer to inspect one layer's
+    cel in isolation (an empty cel reads as all-transparent).
     """
     p = ops.validate_sprite_path(path, must_exist=True)
     rect = ops.validate_read_rect(x, y, width, height)
     fr = ops.validate_frame(frame)
-    return runner.extract_result(runner.run_script(lua.script_read_pixels(p, rect, fr)))
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    result = runner.extract_result(
+        runner.run_script(lua.script_read_pixels(p, rect, fr, layer_name))
+    )
+    if layer_name:
+        result["layer"] = layer_name
+    return result
 
 
 @server.tool()
@@ -320,6 +405,7 @@ def export(
     sheet_type: str = "rows",
     columns: int = 0,
     padding: int = 0,
+    scale: int = 1,
 ) -> dict:
     """Export the sprite for use in a game engine.
 
@@ -327,14 +413,24 @@ def export(
     'spritesheet' (PNG atlas + <out>.json Godot-oriented metadata: frame rects,
     durations in ms, animations from tags). sheet_type: rows|columns|horizontal|
     vertical|packed; columns=0 means auto; padding adds border+spacing pixels.
+    scale upsamples nearest-neighbor on the way out (the sprite file is
+    untouched) — handy for shareable gifs/pngs of small sprites.
     """
     p = ops.validate_sprite_path(path, must_exist=True)
     fmt = ops.validate_export_format(format)
     out_path = ops.validate_out_path(out, fmt)
+    s = ops.validate_scale(scale)
 
     if fmt in ("png", "gif"):
-        result = runner.extract_result(runner.run_script(lua.script_export_flat(p, out_path)))
-        info: dict = {"out": str(out_path), "format": fmt, "frames": result["frames"]}
+        result = runner.extract_result(
+            runner.run_script(lua.script_export_flat(p, out_path, s))
+        )
+        info: dict = {
+            "out": str(out_path),
+            "format": fmt,
+            "frames": result["frames"],
+            "scale": s,
+        }
         if fmt == "png" and result["frames"] > 1:
             info["note"] = (
                 f"sprite has {result['frames']} frames but PNG holds one image — "
@@ -354,7 +450,7 @@ def export(
     fd, raw_json = tempfile.mkstemp(suffix=".json", prefix="aseprite_mcp_sheet_")
     os.close(fd)
     try:
-        script = lua.script_export_spritesheet(p, out_path, Path(raw_json), st, cols, pad)
+        script = lua.script_export_spritesheet(p, out_path, Path(raw_json), st, cols, pad, s)
         runner.run_script(script)
         ase_data = json.loads(Path(raw_json).read_text())
     finally:
@@ -366,5 +462,6 @@ def export(
         "out": str(out_path),
         "metadata_path": str(meta_path),
         "format": "spritesheet",
+        "scale": s,
         "godot_metadata": metadata,
     }

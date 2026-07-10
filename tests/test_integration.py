@@ -135,6 +135,46 @@ def test_flood_fill_replaces_contiguous_region(tmp_path):
     assert img.getpixel((0, 0))[3] == 0  # outside the region untouched
 
 
+def test_replace_color_swaps_matches_in_region_and_reports_count(tmp_path):
+    spr = str(tmp_path / "swap.ase")
+    tools.create_canvas(spr, 4, 2)
+    tools.draw_grid(spr, rows=["rrgg", "rrgg"], legend={"r": RED, "g": GREEN})
+    msg = tools.replace_color(spr, RED, BLUE, x=0, y=0, width=2, height=1)
+    assert "2 pixel(s)" in msg
+    px = tools.read_pixels(spr)
+    assert px["rows"] == ["aabb", "ccbb"]
+    assert px["legend"]["a"] == BLUE
+    assert px["legend"]["c"] == RED  # outside the rect untouched
+
+
+def test_replace_color_zero_matches_notes_it(tmp_path):
+    spr = str(tmp_path / "swap0.ase")
+    tools.create_canvas(spr, 2, 1)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    msg = tools.replace_color(spr, GREEN, BLUE)
+    assert "0 pixel(s)" in msg
+    assert "not found" in msg
+
+
+def test_replace_color_transparent_target_erases(tmp_path):
+    spr = str(tmp_path / "swaperase.ase")
+    tools.create_canvas(spr, 2, 1)
+    tools.draw_grid(spr, rows=["rg"], legend={"r": RED, "g": GREEN})
+    tools.replace_color(spr, RED, "#00000000")
+    px = tools.read_pixels(spr)
+    assert px["rows"] == [".a"]
+    assert px["legend"]["a"] == GREEN
+
+
+def test_replace_color_indexed_mode(tmp_path):
+    spr = str(tmp_path / "swapix.ase")
+    tools.create_canvas(spr, 2, 1, color_mode="indexed", palette="pico8")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#ff004d"}])
+    tools.replace_color(spr, "#ff004d", "#29adff")
+    px = tools.read_pixels(spr)
+    assert px["legend"]["a"] == "#29adff"
+
+
 def test_indexed_gameboy_palette(tmp_path):
     spr = str(tmp_path / "gb.ase")
     out = tmp_path / "gb.png"
@@ -311,6 +351,44 @@ def test_add_tag_out_of_range_and_duplicate_fail(tmp_path):
         tools.add_tag(spr, "walk", 1, 1)
 
 
+def test_delete_tag_removes_only_the_tag(tmp_path):
+    spr = str(tmp_path / "deltag.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_frame(spr)
+    tools.add_tag(spr, "walk", 1, 2)
+    tools.delete_tag(spr, "walk")
+    info = tools.get_canvas_info(spr)
+    assert info["tags"] == []
+    assert len(info["frames"]) == 2  # frames untouched
+    with pytest.raises(AsepriteError, match="tag not found"):
+        tools.delete_tag(spr, "walk")
+
+
+def test_delete_layer_and_last_layer_guard(tmp_path):
+    spr = str(tmp_path / "dellayer.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_layer(spr, "fx")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}], layer="fx")
+    tools.delete_layer(spr, "fx")
+    assert [l["name"] for l in tools.get_canvas_info(spr)["layers"]] == ["Layer 1"]
+    assert tools.read_pixels(spr)["rows"] == ["....", "....", "....", "...."]
+    with pytest.raises(AsepriteError, match="only layer"):
+        tools.delete_layer(spr, "Layer 1")
+
+
+def test_rename_layer_including_case_change(tmp_path):
+    spr = str(tmp_path / "renlayer.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.add_layer(spr, "fx")
+    tools.rename_layer(spr, "fx", "sparkles")
+    names = [l["name"] for l in tools.get_canvas_info(spr)["layers"]]
+    assert "sparkles" in names and "fx" not in names
+    tools.rename_layer(spr, "sparkles", "Sparkles")  # case-only rename is fine
+    assert "Sparkles" in [l["name"] for l in tools.get_canvas_info(spr)["layers"]]
+    with pytest.raises(AsepriteError, match="already exists"):
+        tools.rename_layer(spr, "Sparkles", "LAYER 1")
+
+
 def test_pixels_survive_shape_then_pixel_edits(tmp_path):
     # regression guard for the cropped-cel gotcha: a shape creates a small cel,
     # later putPixels outside its bounds must still land
@@ -435,6 +513,32 @@ def test_spritesheet_export_with_godot_metadata(tmp_path):
     assert Path(result["metadata_path"]).is_file()
 
 
+def test_export_png_scaled_nearest_neighbor(tmp_path):
+    spr = str(tmp_path / "scaled.ase")
+    out = tmp_path / "scaled.png"
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    result = tools.export(spr, str(out), format="png", scale=8)
+    img = _rgba(out)
+    assert img.size == (32, 32)
+    for xy in [(0, 0), (7, 7)]:
+        assert img.getpixel(xy) == (255, 0, 0, 255), xy  # crisp 8x8 block
+    assert img.getpixel((8, 8))[3] == 0
+    assert result["scale"] == 8
+    assert tools.get_canvas_info(spr)["width"] == 4  # sprite file untouched
+
+
+def test_export_spritesheet_scaled(tmp_path):
+    spr = str(tmp_path / "scaledsheet.ase")
+    out = tmp_path / "scaledsheet.png"
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr)
+    result = tools.export(spr, str(out), format="spritesheet", scale=2)
+    assert _rgba(out).size == (16, 8)
+    assert result["godot_metadata"]["frame_width"] == 8
+
+
 def test_preview_is_nearest_neighbor_scaled(tmp_path):
     spr = str(tmp_path / "prev.ase")
     tools.create_canvas(spr, 4, 4)
@@ -447,6 +551,30 @@ def test_preview_is_nearest_neighbor_scaled(tmp_path):
         assert img.getpixel(xy) == (255, 0, 0, 255), xy
     assert img.getpixel((8, 0))[3] == 0
     assert img.getpixel((0, 8))[3] == 0
+
+
+def test_preview_contact_sheet_lays_frames_horizontally(tmp_path):
+    spr = str(tmp_path / "sheetprev.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr, mode="empty")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": BLUE}], frame=2)
+    img = PILImage.open(
+        io.BytesIO(tools.preview(spr, scale=2, all_frames=True).data)
+    ).convert("RGBA")
+    # 2 frames of 4px + a 1px gap, all at scale 2 -> (4+1+4)*2 x 4*2
+    assert img.size == (18, 8)
+    assert img.getpixel((0, 0)) == (255, 0, 0, 255)  # frame 1 tile
+    assert img.getpixel((10, 0)) == (0, 0, 255, 255)  # frame 2 tile after the gap
+    assert img.getpixel((8, 0))[3] == 0  # gap column stays transparent
+
+
+def test_preview_all_frames_rejects_grid(tmp_path):
+    spr = str(tmp_path / "sheetgrid.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    with pytest.raises(ValueError, match="grid"):
+        tools.preview(spr, grid=2, all_frames=True)
 
 
 def test_corrupt_sprite_fails_loudly(tmp_path):
@@ -490,6 +618,27 @@ def test_read_pixels_subregion_and_indexed_palette(tmp_path):
     result = tools.read_pixels(spr, x=1, y=1, width=2, height=1)
     assert result["rows"] == ["a."]
     assert result["legend"]["a"] == "#8bac0f"
+
+
+def test_read_pixels_isolates_a_layer(tmp_path):
+    spr = str(tmp_path / "iso.ase")
+    tools.create_canvas(spr, 2, 1)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_layer(spr, "fx")
+    tools.draw_pixels(spr, [{"x": 1, "y": 0, "color": BLUE}], layer="fx")
+    assert tools.read_pixels(spr)["rows"] == ["ab"]  # composite by default
+    fx = tools.read_pixels(spr, layer="fx")
+    assert fx["rows"] == [".a"]
+    assert fx["legend"]["a"] == BLUE
+    assert fx["layer"] == "fx"
+
+
+def test_read_pixels_empty_layer_reads_transparent(tmp_path):
+    spr = str(tmp_path / "isoempty.ase")
+    tools.create_canvas(spr, 2, 1)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_layer(spr, "fx")
+    assert tools.read_pixels(spr, layer="fx")["rows"] == [".."]
 
 
 def test_read_pixels_oversize_region_fails(tmp_path):

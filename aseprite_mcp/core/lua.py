@@ -321,6 +321,61 @@ def script_clear_region(
     )
 
 
+def script_replace_color(
+    path: Path,
+    from_color: RGBA,
+    to_color: RGBA,
+    rect: tuple[int, int, int, int],
+    layer: str | None,
+    frame: int,
+) -> str:
+    x, y, w, h = rect
+    return (
+        _open_sprite(path)
+        + _AMCP_COLOR
+        + _check_frame(frame)
+        + _resolve_layer(layer)
+        + f"local rx, ry, rw, rh = {x}, {y}, {w}, {h}\n"
+        + "if rw == 0 then rw = spr.width - rx end\n"
+        + "if rh == 0 then rh = spr.height - ry end\n"
+        + "if rw < 1 or rh < 1 or rx + rw > spr.width or ry + rh > spr.height then\n"
+        + '  error(string.format("replace region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
+        + "    rx, ry, rw, rh, spr.width, spr.height))\n"
+        + "end\n"
+        + f"local cel = layer:cel({frame})\n"
+        + "if cel == nil then\n"
+        + f'  error("layer \'" .. layer.name .. "\' has no content on frame {frame} — nothing to replace")\n'
+        + "end\n"
+        + "local full = Image(spr.width, spr.height, spr.colorMode)\n"
+        + "full:drawImage(cel.image, cel.position)\n"
+        + f"cel = spr:newCel(layer, {frame}, full, Point(0, 0))\n"
+        + "local img = cel.image\n"
+        # a 1x1 probe renders both colors in the sprite's own mode, giving the
+        # exact raw values to compare and write — same semantics in every mode
+        + "local probe = Image(1, 1, spr.colorMode)\n"
+        + f"probe:drawPixel(0, 0, {color_call(from_color)})\n"
+        + "local fromv = probe:getPixel(0, 0)\n"
+        + f"probe:drawPixel(0, 0, {color_call(to_color)})\n"
+        + "local tov = probe:getPixel(0, 0)\n"
+        + "local n = 0\n"
+        + "for py = ry, ry + rh - 1 do\n"
+        + "  for px = rx, rx + rw - 1 do\n"
+        + "    if img:getPixel(px, py) == fromv then\n"
+        + "      img:drawPixel(px, py, tov)\n"
+        + "      n = n + 1\n"
+        + "    end\n"
+        + "  end\n"
+        + "end\n"
+        + _save_sprite(path)
+        + "local snaps = {}\n"
+        + "for req, got in pairs(AMCP_SNAPPED) do\n"
+        + "  snaps[#snaps + 1] = string.format('\"%s\": \"%s\"', req, got)\n"
+        + "end\n"
+        + "table.sort(snaps)\n"
+        + f'print("{RESULT_MARKER} " .. string.format(\'{{"replaced": %d, "snapped": {{%s}}}}\', n, table.concat(snaps, ", ")))\n'
+    )
+
+
 def script_add_layer(path: Path, name: str) -> str:
     q = lua_quote(name)
     return (
@@ -332,6 +387,35 @@ def script_add_layer(path: Path, name: str) -> str:
         "end\n"
         "local layer = spr:newLayer()\n"
         f"layer.name = {q}\n"
+        + _save_sprite(path)
+    )
+
+
+def script_delete_layer(path: Path, name: str) -> str:
+    return (
+        _open_sprite(path)
+        + _resolve_layer(name)
+        + "if #spr.layers == 1 then\n"
+        + '  error("cannot delete the only layer — a sprite needs at least one layer")\n'
+        + "end\n"
+        + "spr:deleteLayer(layer)\n"
+        + _save_sprite(path)
+    )
+
+
+def script_rename_layer(path: Path, name: str, new_name: str) -> str:
+    q_new = lua_quote(new_name)
+    return (
+        _open_sprite(path)
+        + _resolve_layer(name)
+        # collision check mirrors add_layer's case-insensitive lookup, but
+        # excludes the layer itself so case-only renames work
+        + "for i = 1, #spr.layers do\n"
+        + f"  if spr.layers[i] ~= layer and string.lower(spr.layers[i].name) == string.lower({q_new}) then\n"
+        + f'    error("layer already exists: " .. {q_new})\n'
+        + "  end\n"
+        + "end\n"
+        + f"layer.name = {q_new}\n"
         + _save_sprite(path)
     )
 
@@ -369,6 +453,25 @@ def script_add_tag(
         f"local tag = spr:newTag({from_frame}, {to_frame})\n"
         f"tag.name = {q}\n"
         f"tag.aniDir = {anidir_lua}\n"
+        + _save_sprite(path)
+    )
+
+
+def script_delete_tag(path: Path, name: str) -> str:
+    q = lua_quote(name)
+    return (
+        _open_sprite(path)
+        + "local tag = nil\n"
+        + "for i = 1, #spr.tags do\n"
+        + f"  if spr.tags[i].name == {q} then tag = spr.tags[i]; break end\n"
+        + "end\n"
+        + "if not tag then\n"
+        + "  local names = {}\n"
+        + "  for i = 1, #spr.tags do names[#names + 1] = spr.tags[i].name end\n"
+        + '  local hint = #names > 0 and ("existing tags: " .. table.concat(names, ", ")) or "the sprite has no tags"\n'
+        + f'  error("tag not found: " .. {q} .. " (" .. hint .. ")")\n'
+        + "end\n"
+        + "spr:deleteTag(tag)\n"
         + _save_sprite(path)
     )
 
@@ -411,8 +514,36 @@ def script_copy_cel(path: Path, from_frame: int, to_frame: int, layer: str | Non
     )
 
 
-def script_preview(path: Path, out_png: Path, scale: int, frame: int, grid: int = 0) -> str:
+def script_preview(
+    path: Path,
+    out_png: Path,
+    scale: int,
+    frame: int,
+    grid: int = 0,
+    all_frames: bool = False,
+) -> str:
     q = lua_quote(str(out_png))
+    if all_frames:
+        # horizontal contact sheet: one tile per frame with a 1-source-pixel gap
+        return (
+            _open_sprite(path)
+            + "local n = #spr.frames\n"
+            + "local w, h = spr.width, spr.height\n"
+            + "local total = n * w + (n - 1)\n"
+            + f"if total * {scale} > 4096 or h * {scale} > 4096 then\n"
+            + f'  error(string.format("contact sheet would be %dx%d; keep scaled size under 4096px '
+            + f'(%d frames of %dx%d, scale {scale})", total * {scale}, h * {scale}, n, w, h))\n'
+            + "end\n"
+            + "local img = Image(total, h, spr.colorMode)\n"
+            + "for i = 1, n do\n"
+            + "  img:drawSprite(spr, i, Point((i - 1) * (w + 1), 0))\n"
+            + "end\n"
+            + f"img:resize{{ width = total * {scale}, height = h * {scale} }}\n"
+            + f"img:saveAs{{ filename = {q}, palette = spr.palettes[1] }}\n"
+            + f"local f = io.open({q}, \"rb\")\n"
+            + f'if not f then error("preview PNG was not written: " .. {q}) end\n'
+            + "f:close()\n"
+        )
     # Grid lines need an exact magenta in every color mode, so the in-memory
     # sprite is normalized to RGB first (preview never saves the sprite).
     grid_convert = (
@@ -459,8 +590,24 @@ def script_preview(path: Path, out_png: Path, scale: int, frame: int, grid: int 
 _READ_KEYS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
-def script_read_pixels(path: Path, rect: tuple[int, int, int, int], frame: int) -> str:
+def script_read_pixels(
+    path: Path, rect: tuple[int, int, int, int], frame: int, layer: str | None = None
+) -> str:
     x, y, w, h = rect
+    if layer is None:
+        render = (
+            "local img = Image(spr.width, spr.height, spr.colorMode)\n"
+            f"img:drawSprite(spr, {frame})\n"
+        )
+    else:
+        # the layer's own cel, not the composite; an empty cel reads as
+        # all-transparent (reads are queries, not edits)
+        render = (
+            _resolve_layer(layer)
+            + "local img = Image(spr.width, spr.height, spr.colorMode)\n"
+            + f"local cel = layer:cel({frame})\n"
+            + "if cel then img:drawImage(cel.image, cel.position) end\n"
+        )
     return (
         _open_sprite(path)
         + _check_frame(frame)
@@ -475,8 +622,7 @@ def script_read_pixels(path: Path, rect: tuple[int, int, int, int], frame: int) 
         + '  error(string.format("read region %dx%d is %d pixels; keep it at or under 4096 '
         + '— pass a smaller x/y/width/height window", rw, rh, rw * rh))\n'
         + "end\n"
-        + "local img = Image(spr.width, spr.height, spr.colorMode)\n"
-        + f"img:drawSprite(spr, {frame})\n"
+        + render
         + "local pc = app.pixelColor\n"
         + f'local keys = "{_READ_KEYS}"\n'
         + r"""
@@ -527,11 +673,19 @@ if #order > 0 then legend_json = legend_json .. ", " .. table.concat(order, ", "
     )
 
 
-def script_export_flat(path: Path, out: Path) -> str:
+def _export_scale_snippet(scale: int) -> str:
+    """In-memory nearest-neighbor upscale; the resized sprite is never saved back."""
+    if scale == 1:
+        return ""
+    return f"spr:resize(spr.width * {scale}, spr.height * {scale})\n"
+
+
+def script_export_flat(path: Path, out: Path, scale: int = 1) -> str:
     q = lua_quote(str(out))
     return (
         _open_sprite(path)
         + _JESC
+        + _export_scale_snippet(scale)
         + f"if not spr:saveCopyAs({q}) then error(\"failed to export: \" .. {q}) end\n"
         + f"local f = io.open({q}, \"rb\")\n"
         + f'if not f then error("export was not written: " .. {q}) end\n'
@@ -556,11 +710,13 @@ def script_export_spritesheet(
     sheet_type: str,
     columns: int,
     padding: int,
+    scale: int = 1,
 ) -> str:
     tq = lua_quote(str(out_png))
     dq = lua_quote(str(data_json))
     return (
         _open_sprite(path)
+        + _export_scale_snippet(scale)
         + "app.command.ExportSpriteSheet{\n"
         "  ui = false,\n"
         "  askOverwrite = false,\n"

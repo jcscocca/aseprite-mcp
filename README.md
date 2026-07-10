@@ -43,16 +43,18 @@ verifies the binary launches at startup and exits loudly if it doesn't.
 | `draw_grid` | Character-grid drawing: `legend` (char → hex color) + `rows` (strings), the write-side twin of `read_pixels` — the compact way to draw sprite-sized art |
 | `draw_pixels` | Batched pixels `[{x, y, color}]` on a layer/frame |
 | `draw_shape` | Line, rectangle, ellipse (optionally filled), flood fill |
+| `replace_color` | Swap every exact-match pixel of one color for another (raw, no blending) within an optional rect — reports how many pixels changed |
 | `clear_region` | Erase a rectangle back to transparency (raw image clear — the eraser; `draw_shape` rejects transparent colors) |
 | `add_layer` | New named layer (duplicate names rejected) |
+| `delete_layer` / `rename_layer` | Layer lifecycle (the last layer is protected; renames collision-checked case-insensitively) |
 | `add_frame` | Append a frame (duplicate of last, or empty) with duration |
 | `set_frame_duration` | Change how long an existing frame plays |
 | `delete_frame` | Remove a frame (later frames shift down; the last frame is protected) |
 | `copy_cel` | Copy a layer's pixels from one frame onto another (re-posing without redrawing) |
-| `add_tag` | Name a frame range as an animation (`walk`, frames 2–4, forward/reverse/pingpong) — becomes a named animation in spritesheet metadata |
-| `preview` | Nearest-neighbor-scaled PNG of a frame, **returned as an image** so the agent sees its work; `grid=N` overlays magenta coordinate lines every N pixels |
-| `read_pixels` | Exact pixel values for a region as a color legend + character grid — ground truth when placement matters (capped at 4096 px per read) |
-| `export` | `png`, animated `gif`, or `spritesheet` (PNG atlas + Godot-oriented JSON: frame rects, durations, animations from tags) |
+| `add_tag` / `delete_tag` | Name a frame range as an animation (`walk`, frames 2–4, forward/reverse/pingpong) — becomes a named animation in spritesheet metadata |
+| `preview` | Nearest-neighbor-scaled PNG of a frame, **returned as an image** so the agent sees its work; `grid=N` overlays magenta coordinate lines; `all_frames=True` renders a contact sheet of the whole animation |
+| `read_pixels` | Exact pixel values for a region as a color legend + character grid — ground truth when placement matters (capped at 4096 px per read); `layer=` inspects one layer's cel instead of the composite |
+| `export` | `png`, animated `gif`, or `spritesheet` (PNG atlas + Godot-oriented JSON: frame rects, durations, animations from tags); `scale=` upsamples nearest-neighbor on the way out |
 
 The intended loop: draw a few things, `preview`, correct course, repeat, then
 `export`. A 16x16 slime with a 3-frame idle animation, drawn entirely through

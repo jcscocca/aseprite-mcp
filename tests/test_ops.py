@@ -216,6 +216,16 @@ def test_grid_pixels_empty_rows_fail():
         ops.validate_grid_pixels([""], {"a": "#000"}, 0, 0)
 
 
+# --- replace color ---
+
+
+def test_replace_colors_parse_and_differ():
+    f, t = ops.validate_replace_colors("#ff0000", "#00ff00")
+    assert (f, t) == (ops.RGBA(255, 0, 0, 255), ops.RGBA(0, 255, 0, 255))
+    with pytest.raises(ValueError, match="differ"):
+        ops.validate_replace_colors("#ff0000", "#f00")
+
+
 # --- layers / frames / durations / scale ---
 
 

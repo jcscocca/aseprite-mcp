@@ -195,6 +195,16 @@ def validate_shape(shape, points, color, *, filled: bool, tolerance: int) -> Sha
     return ShapeOp(tool=tools[shape], points=pts, color=rgba, tolerance=tolerance)
 
 
+def validate_replace_colors(from_color, to_color) -> tuple[RGBA, RGBA]:
+    f = parse_color(from_color)
+    t = parse_color(to_color)
+    if f == t:
+        raise ValueError(
+            f"from_color and to_color are both {f.hex()!r} — they must differ"
+        )
+    return (f, t)
+
+
 GRID_SKIP_CHARS = ". "
 
 
