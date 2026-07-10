@@ -32,6 +32,19 @@ def test_extract_result_missing_marker_fails_loudly():
         runner.extract_result("just noise\n")
 
 
+def test_extract_result_optional_returns_none_without_marker():
+    assert runner.extract_result_optional("just noise\n") is None
+
+
+def test_extract_result_optional_parses_marker():
+    assert runner.extract_result_optional('AMCP_RESULT {"a": 1}\n') == {"a": 1}
+
+
+def test_extract_result_optional_still_rejects_bad_json():
+    with pytest.raises(runner.AsepriteError, match="invalid JSON"):
+        runner.extract_result_optional("AMCP_RESULT {broken\n")
+
+
 def test_extract_result_bad_json_fails_loudly():
     with pytest.raises(runner.AsepriteError, match="invalid JSON"):
         runner.extract_result("AMCP_RESULT {broken\n")
@@ -43,16 +56,42 @@ def test_verify_binary_missing_path_raises(monkeypatch):
         runner.verify_binary()
 
 
-def test_run_script_reports_script_and_output_on_failure(monkeypatch, tmp_path):
+def test_run_script_failure_reports_output_without_script(monkeypatch, tmp_path):
     fake = tmp_path / "fake-aseprite"
     fake.write_text("#!/bin/sh\necho 'boom: something broke'\nexit 1\n")
     fake.chmod(0o755)
     monkeypatch.setenv("ASEPRITE_BIN", str(fake))
+    monkeypatch.delenv("ASEPRITE_MCP_DEBUG", raising=False)
     with pytest.raises(runner.AsepriteError) as exc:
         runner.run_script("error('x')")
     msg = str(exc.value)
     assert "boom: something broke" in msg  # aseprite errors land on stdout
-    assert "error('x')" in msg  # generated script included for debuggability
+    assert "error('x')" not in msg  # script dump is debug-only noise for agents
+    assert "ASEPRITE_MCP_DEBUG" in msg  # points at the flag that restores it
+
+
+def test_run_script_failure_includes_script_when_debug_set(monkeypatch, tmp_path):
+    fake = tmp_path / "fake-aseprite"
+    fake.write_text("#!/bin/sh\necho 'boom'\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("ASEPRITE_BIN", str(fake))
+    monkeypatch.setenv("ASEPRITE_MCP_DEBUG", "1")
+    with pytest.raises(runner.AsepriteError) as exc:
+        runner.run_script("error('x')")
+    assert "error('x')" in str(exc.value)
+
+
+def test_run_script_timeout_omits_script_by_default(monkeypatch, tmp_path):
+    fake = tmp_path / "fake-aseprite"
+    fake.write_text("#!/bin/sh\nsleep 5\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("ASEPRITE_BIN", str(fake))
+    monkeypatch.delenv("ASEPRITE_MCP_DEBUG", raising=False)
+    with pytest.raises(runner.AsepriteError) as exc:
+        runner.run_script("error('x')", timeout=1)
+    msg = str(exc.value)
+    assert "timed out" in msg
+    assert "error('x')" not in msg
 
 
 def test_run_script_returns_stdout(monkeypatch, tmp_path):

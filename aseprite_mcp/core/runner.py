@@ -71,19 +71,33 @@ def run_script(lua_source: str, timeout: int = 120) -> str:
                 "Set ASEPRITE_BIN to a working aseprite executable."
             ) from None
         except subprocess.TimeoutExpired:
-            raise AsepriteError(
-                f"Aseprite timed out after {timeout}s running script:\n{lua_source}"
-            ) from None
+            msg = f"Aseprite timed out after {timeout}s running a script"
+            if os.environ.get("ASEPRITE_MCP_DEBUG"):
+                msg += f":\n{lua_source}"
+            else:
+                msg += " (set ASEPRITE_MCP_DEBUG=1 to include the generated Lua script)"
+            raise AsepriteError(msg) from None
         if proc.returncode != 0:
-            raise AsepriteError(
+            msg = (
                 f"Aseprite script failed (exit {proc.returncode}).\n"
                 f"--- output ---\n{proc.stdout.strip()}\n"
-                f"--- stderr ---\n{proc.stderr.strip()}\n"
-                f"--- script ---\n{lua_source}"
+                f"--- stderr ---\n{proc.stderr.strip()}"
             )
+            if os.environ.get("ASEPRITE_MCP_DEBUG"):
+                msg += f"\n--- script ---\n{lua_source}"
+            else:
+                msg += "\n(set ASEPRITE_MCP_DEBUG=1 to include the generated Lua script)"
+            raise AsepriteError(msg)
         return proc.stdout
     finally:
         os.unlink(script.name)
+
+
+def extract_result_optional(stdout: str) -> dict | None:
+    """Parse the last RESULT_MARKER line if the script printed one, else None."""
+    if not any(line.startswith(RESULT_MARKER) for line in stdout.splitlines()):
+        return None
+    return extract_result(stdout)
 
 
 def extract_result(stdout: str) -> dict:

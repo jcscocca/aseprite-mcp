@@ -167,6 +167,12 @@ def validate_shape(shape, points, color, *, filled: bool, tolerance: int) -> Sha
             f"unknown shape {shape!r}: expected one of 'line', 'rectangle', 'ellipse', 'fill'"
         )
     rgba = parse_color(color)
+    if rgba.a == 0:
+        raise ValueError(
+            f"color {color!r} is fully transparent — draw_shape cannot erase: "
+            "use clear_region for rectangles, or draw_pixels with '#00000000' "
+            "for individual pixels"
+        )
     expected_points = 1 if shape == "fill" else 2
     if not isinstance(points, list) or len(points) != expected_points:
         raise ValueError(
@@ -187,6 +193,57 @@ def validate_shape(shape, points, color, *, filled: bool, tolerance: int) -> Sha
         "fill": "paint_bucket",
     }
     return ShapeOp(tool=tools[shape], points=pts, color=rgba, tolerance=tolerance)
+
+
+GRID_SKIP_CHARS = ". "
+
+
+def validate_grid_pixels(rows, legend, x, y) -> list[Pixel]:
+    ox = _int(x, "x", 0, MAX_CANVAS)
+    oy = _int(y, "y", 0, MAX_CANVAS)
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, str) for r in rows):
+        raise ValueError("rows must be a non-empty list of strings, one string per pixel row")
+    width = len(rows[0])
+    if width < 1:
+        raise ValueError("rows must be non-empty strings, one character per pixel")
+    for i, row in enumerate(rows):
+        if len(row) != width:
+            raise ValueError(
+                f"rows[{i}] is {len(row)} character(s) wide, expected {width} — "
+                "all rows must have equal width"
+            )
+    if not isinstance(legend, dict) or not legend:
+        raise ValueError(
+            "legend must be a dict mapping single characters to hex colors, "
+            "e.g. {'r': '#ff0000'}"
+        )
+    colors: dict[str, RGBA] = {}
+    for key, value in legend.items():
+        if not isinstance(key, str) or len(key) != 1 or key in GRID_SKIP_CHARS:
+            raise ValueError(
+                f"legend key {key!r} must be a single character other than "
+                "'.' and ' ' (those mean skip)"
+            )
+        try:
+            colors[key] = parse_color(value)
+        except ValueError as e:
+            raise ValueError(f"legend[{key!r}]: {e}") from None
+    out: list[Pixel] = []
+    for gy, row in enumerate(rows):
+        for gx, ch in enumerate(row):
+            if ch in GRID_SKIP_CHARS:
+                continue
+            color = colors.get(ch)
+            if color is None:
+                keys = ", ".join(sorted(colors))
+                raise ValueError(
+                    f"rows[{gy}][{gx}] is {ch!r}, which is not in the legend "
+                    f"(legend keys: {keys}; use '.' or ' ' to skip a cell)"
+                )
+            out.append(Pixel(ox + gx, oy + gy, color))
+    if not out:
+        raise ValueError("grid has no painted cells — every character is '.' or ' '")
+    return out
 
 
 def validate_layer_name(name) -> str:

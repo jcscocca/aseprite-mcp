@@ -40,9 +40,10 @@ launches at startup and exits loudly if it doesn't.
 | `create_canvas` | New sprite: size, color mode (rgb/grayscale/indexed), palette preset (`gameboy`, `pico8`, `sweetie16`) or hex list |
 | `get_canvas_info` | Size, color mode, layers, frames + durations, palette, tags |
 | `set_palette` | Replace the palette with 1–256 hex colors |
+| `draw_grid` | Character-grid drawing: `legend` (char → hex color) + `rows` (strings), the write-side twin of `read_pixels` — the compact way to draw sprite-sized art |
 | `draw_pixels` | Batched pixels `[{x, y, color}]` on a layer/frame |
 | `draw_shape` | Line, rectangle, ellipse (optionally filled), flood fill |
-| `clear_region` | Erase a rectangle back to transparency (raw image clear — the eraser `draw_shape` can't be) |
+| `clear_region` | Erase a rectangle back to transparency (raw image clear — the eraser; `draw_shape` rejects transparent colors) |
 | `add_layer` | New named layer (duplicate names rejected) |
 | `add_frame` | Append a frame (duplicate of last, or empty) with duration |
 | `set_frame_duration` | Change how long an existing frame plays |
@@ -74,12 +75,19 @@ for a Godot importer (AtlasTexture regions / SpriteFrames).
 Notable Aseprite batch-mode traps handled here: cel images are cropped to
 their bounds (pixels are drawn onto full-canvas cels so `putPixel` can't
 silently no-op), indexed-mode colors are resolved against the sprite's own
-palette in Lua (batch mode's "current palette" is not the sprite's), and
-`newFrame(n)` returns the frame at position `n` rather than the new copy.
-Erasing: `draw_pixels` sets pixels raw, so `'#00000000'` erases, and
-`clear_region` clears rectangles at the image level; `draw_shape` strokes
-alpha-blend and cannot erase. `Sprite:newTag` does no bounds checking, so tag
-ranges are validated in Lua before the tag is created.
+palette in Lua (batch mode's "current palette" is not the sprite's, and
+inexact matches are reported back as snapped colors), and `newFrame(n)`
+returns the frame at position `n` rather than the new copy. Erasing:
+`draw_pixels`/`draw_grid` set pixels raw, so `'#00000000'` erases, and
+`clear_region` clears rectangles at the image level; `draw_shape` rejects
+fully transparent colors (batch-mode tool strokes erase with them, but that
+behavior is undocumented upstream, so it isn't relied on). `Sprite:newTag`
+does no bounds checking, so tag ranges are validated in Lua before the tag is
+created. `setPalette` refuses to shrink below an in-use palette index — the
+pixels would silently render blank. GIF export reports tags whose
+pingpong/reverse direction the format drops. Failed scripts raise with
+Aseprite's output; set `ASEPRITE_MCP_DEBUG=1` to also include the generated
+Lua source.
 
 ## Development
 

@@ -77,6 +77,26 @@ def test_draw_pixels_exact_rgba(tmp_path):
     assert img.getpixel((1, 1))[3] == 0  # untouched pixel stays transparent
 
 
+def test_draw_grid_roundtrips_with_read_pixels(tmp_path):
+    spr = str(tmp_path / "grid.ase")
+    tools.create_canvas(spr, 4, 4)
+    msg = tools.draw_grid(spr, rows=[".rr.", "r..r"], legend={"r": RED}, x=0, y=1)
+    assert "4 pixel(s)" in msg
+    result = tools.read_pixels(spr)
+    assert result["rows"] == ["....", ".aa.", "a..a", "...."]
+    assert result["legend"]["a"] == RED
+
+
+def test_draw_grid_erases_with_transparent_legend_color(tmp_path):
+    spr = str(tmp_path / "gerase.ase")
+    tools.create_canvas(spr, 2, 1)
+    tools.draw_shape(spr, "rectangle", [[0, 0], [1, 0]], GREEN, filled=True)
+    tools.draw_grid(spr, rows=["e."], legend={"e": "#00000000"})
+    px = tools.read_pixels(spr)
+    assert px["rows"] == [".a"]
+    assert px["legend"]["a"] == GREEN
+
+
 def test_filled_rectangle(tmp_path):
     spr = str(tmp_path / "rect.ase")
     out = tmp_path / "rect.png"
@@ -136,6 +156,45 @@ def test_set_palette(tmp_path):
     assert tools.get_canvas_info(spr)["palette"] == ["#112233", "#445566"]
 
 
+def test_indexed_offpalette_color_snap_is_reported(tmp_path):
+    spr = str(tmp_path / "snap.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="pico8")
+    msg = tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#123456"}])
+    assert "snapped" in msg
+    assert "#123456" in msg and "#1d2b53" in msg  # nearest pico8 entry
+
+
+def test_indexed_exact_color_has_no_snap_note(tmp_path):
+    spr = str(tmp_path / "nosnap.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="pico8")
+    msg = tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#ff004d"}])
+    assert "snapped" not in msg
+
+
+def test_rgb_draw_has_no_snap_note(tmp_path):
+    spr = str(tmp_path / "rgbnosnap.ase")
+    tools.create_canvas(spr, 4, 4)
+    msg = tools.draw_shape(spr, "line", [[0, 0], [1, 1]], "#123456")
+    assert "snapped" not in msg
+
+
+def test_set_palette_shrink_below_used_index_fails(tmp_path):
+    spr = str(tmp_path / "shrink.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="pico8")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#ff004d"}])  # pico8 index 8
+    with pytest.raises(AsepriteError, match="palette index 8"):
+        tools.set_palette(spr, ["#000000", "#ff0000"])
+    assert len(tools.get_canvas_info(spr)["palette"]) == 16  # palette unchanged
+
+
+def test_set_palette_shrink_covering_used_indices_ok(tmp_path):
+    spr = str(tmp_path / "shrinkok.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="pico8")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#1d2b53"}])  # pico8 index 1
+    tools.set_palette(spr, ["#000000", "#1d2b53"])
+    assert len(tools.get_canvas_info(spr)["palette"]) == 2
+
+
 def test_add_layer_and_duplicate_name_fails(tmp_path):
     spr = str(tmp_path / "layers.ase")
     tools.create_canvas(spr, 4, 4)
@@ -171,6 +230,29 @@ def test_add_frame_durations_and_gif_export(tmp_path):
     exported = tools.export(spr, str(gif), format="gif")
     assert exported["frames"] == 2
     assert gif.read_bytes()[:4] == b"GIF8"
+
+
+def test_gif_export_notes_dropped_tag_direction(tmp_path):
+    spr = str(tmp_path / "pp.ase")
+    gif = tmp_path / "pp.gif"
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr)
+    tools.add_tag(spr, "bounce", 1, 2, direction="pingpong")
+    result = tools.export(spr, str(gif), format="gif")
+    assert "bounce" in result["note"]
+    assert "pingpong" in result["note"]
+
+
+def test_gif_export_forward_tags_need_no_note(tmp_path):
+    spr = str(tmp_path / "fwd.ase")
+    gif = tmp_path / "fwd.gif"
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    tools.add_frame(spr)
+    tools.add_tag(spr, "walk", 1, 2)
+    result = tools.export(spr, str(gif), format="gif")
+    assert "note" not in result
 
 
 def test_set_frame_duration(tmp_path):

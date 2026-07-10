@@ -156,6 +156,66 @@ def test_filled_only_for_rect_ellipse():
         ops.validate_shape("line", [[0, 0], [1, 1]], "#f00", filled=True, tolerance=0)
 
 
+def test_shape_rejects_fully_transparent_color():
+    with pytest.raises(ValueError, match="clear_region"):
+        ops.validate_shape("rectangle", [[0, 0], [3, 3]], "#00000000", filled=True, tolerance=0)
+
+
+def test_shape_allows_partial_alpha():
+    op = ops.validate_shape("line", [[0, 0], [1, 1]], "#ff000080", filled=False, tolerance=0)
+    assert op.color.a == 0x80
+
+
+# --- draw grid ---
+
+
+def test_grid_pixels_maps_legend_chars_with_offset():
+    px = ops.validate_grid_pixels(["r.", ".b"], {"r": "#f00", "b": "#00f"}, 1, 2)
+    assert px == [
+        ops.Pixel(1, 2, ops.RGBA(255, 0, 0, 255)),
+        ops.Pixel(2, 3, ops.RGBA(0, 0, 255, 255)),
+    ]
+
+
+def test_grid_pixels_space_and_dot_are_skipped():
+    px = ops.validate_grid_pixels(["r r", "..."], {"r": "#f00"}, 0, 0)
+    assert [(p.x, p.y) for p in px] == [(0, 0), (2, 0)]
+
+
+def test_grid_pixels_ragged_rows_fail():
+    with pytest.raises(ValueError, match=r"rows\[1\]"):
+        ops.validate_grid_pixels(["ab", "a"], {"a": "#000", "b": "#fff"}, 0, 0)
+
+
+def test_grid_pixels_unknown_char_names_cell():
+    with pytest.raises(ValueError, match=r"rows\[0\]\[1\]"):
+        ops.validate_grid_pixels(["ax"], {"a": "#000"}, 0, 0)
+
+
+def test_grid_pixels_legend_keys_must_be_single_paintable_chars():
+    with pytest.raises(ValueError, match="legend"):
+        ops.validate_grid_pixels(["a"], {"aa": "#000"}, 0, 0)
+    with pytest.raises(ValueError, match="legend"):
+        ops.validate_grid_pixels(["a"], {".": "#000", "a": "#fff"}, 0, 0)
+
+
+def test_grid_pixels_legend_color_errors_name_the_key():
+    with pytest.raises(ValueError, match=r"legend\['a'\]"):
+        ops.validate_grid_pixels(["a"], {"a": "nope"}, 0, 0)
+
+
+def test_grid_pixels_all_blank_fails():
+    with pytest.raises(ValueError, match="no painted cells"):
+        ops.validate_grid_pixels(["..", "  "], {"a": "#000"}, 0, 0)
+
+
+def test_grid_pixels_empty_rows_fail():
+    with pytest.raises(ValueError, match="rows"):
+        ops.validate_grid_pixels([], {"a": "#000"}, 0, 0)
+    with pytest.raises(ValueError, match="rows"):
+        ops.validate_grid_pixels([""], {"a": "#000"}, 0, 0)
+
+
 # --- layers / frames / durations / scale ---
 
 

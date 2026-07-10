@@ -89,6 +89,18 @@ def test_draw_shape_line_script():
     assert "saveAs" in s
 
 
+def test_draw_scripts_report_snapped_indexed_colors():
+    # indexed mode resolves colors to the nearest palette entry; the scripts
+    # must report inexact matches so the agent hears about the substitution
+    s = lua.script_draw_pixels(SPR, [Pixel(0, 0, RGBA(1, 1, 1))], layer=None, frame=1)
+    assert "AMCP_SNAPPED" in s
+    assert '"snapped"' in s
+    op = ShapeOp(tool="line", points=[(0, 0), (1, 1)], color=RGBA(1, 1, 1))
+    g = lua.script_draw_shape(SPR, op, layer=None, frame=1)
+    assert "AMCP_SNAPPED" in g
+    assert '"snapped"' in g
+
+
 def test_draw_shape_fill_script_has_tolerance_and_bounds_check():
     op = ShapeOp(tool="paint_bucket", points=[(3, 4)], color=RGBA(9, 9, 9), tolerance=32)
     s = lua.script_draw_shape(SPR, op, layer=None, frame=1)
@@ -102,6 +114,15 @@ def test_set_palette_script():
     s = lua.script_set_palette(SPR, [RGBA(1, 2, 3)])
     assert "spr:setPalette(pal)" in s
     assert "Color{ r=1, g=2, b=3, a=255 }" in s
+
+
+def test_set_palette_script_guards_in_use_indices():
+    s = lua.script_set_palette(SPR, [RGBA(1, 2, 3)])
+    # shrinking below an in-use index silently blanks pixels, so every cel is
+    # scanned before the palette is replaced
+    assert "ColorMode.INDEXED" in s
+    assert "cel.image:pixels()" in s
+    assert "uses palette index" in s
 
 
 def test_add_layer_script_fails_on_duplicate():
@@ -186,6 +207,15 @@ def test_export_flat_png_and_gif():
     assert lua.RESULT_MARKER in s  # reports frame count so caller can warn on multi-frame PNG
     g = lua.script_export_flat(SPR, Path("/tmp/out.gif"))
     assert 'saveCopyAs("/tmp/out.gif")' in g
+
+
+def test_export_flat_reports_nonforward_tags():
+    # GIF plays frames linearly; pingpong/reverse tags are silently dropped by
+    # the format, so the script reports them for the caller to warn about
+    s = lua.script_export_flat(SPR, Path("/tmp/out.gif"))
+    assert "nonforward_tags" in s
+    assert "aniDir" in s
+    assert "pingpong" in s
 
 
 def test_export_spritesheet_script():

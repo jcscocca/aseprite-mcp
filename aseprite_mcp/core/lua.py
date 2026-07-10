@@ -26,7 +26,9 @@ end
 # Converting Color{r,g,b} to a pixel/tool color in INDEXED mode goes through the
 # *app's* current palette, which in batch mode is not the sprite's palette — so
 # the palette index is computed here from the sprite's own palette instead.
+# Inexact matches are recorded in AMCP_SNAPPED for the snap report.
 _AMCP_COLOR = r"""
+local AMCP_SNAPPED = {}
 local function amcp_color(r, g, b, a)
   if spr.colorMode == ColorMode.INDEXED then
     if a == 0 then return Color{ index = spr.transparentColor } end
@@ -38,11 +40,25 @@ local function amcp_color(r, g, b, a)
       local d = dr * dr + dg * dg + db * db
       if d < bestd then best, bestd = i, d end
     end
+    if bestd > 0 then
+      local pc = pal:getColor(best)
+      AMCP_SNAPPED[string.format("#%02x%02x%02x", r, g, b)] =
+        string.format("#%02x%02x%02x", pc.red, pc.green, pc.blue)
+    end
     return Color{ index = best }
   end
   return Color{ r = r, g = g, b = b, a = a }
 end
 """
+
+_SNAP_REPORT = (
+    "local snaps = {}\n"
+    "for req, got in pairs(AMCP_SNAPPED) do\n"
+    "  snaps[#snaps + 1] = string.format('\"%s\": \"%s\"', req, got)\n"
+    "end\n"
+    "table.sort(snaps)\n"
+    f'print("{RESULT_MARKER} " .. \'{{"snapped": {{\' .. table.concat(snaps, ", ") .. \'}}}}\')\n'
+)
 
 
 def lua_quote(s: str) -> str:
@@ -191,7 +207,26 @@ end
 
 
 def script_set_palette(path: Path, colors: list[RGBA]) -> str:
-    return _open_sprite(path) + _palette_snippet(colors) + _save_sprite(path)
+    n = len(colors)
+    # Indexed pixels keep their index when the palette is replaced; any index
+    # beyond the new palette would silently render blank, so scan every cel first.
+    guard = (
+        "if spr.colorMode == ColorMode.INDEXED then\n"
+        "  for _, cel in ipairs(spr.cels) do\n"
+        "    for it in cel.image:pixels() do\n"
+        "      local idx = it()\n"
+        f"      if idx >= {n} then\n"
+        f'        error(string.format("cannot shrink palette to {n} color(s): '
+        "pixel (%d,%d) on layer '%s' frame %d uses palette index %d — repaint "
+        'those pixels first or pass at least %d colors",\n'
+        "          it.x + cel.position.x, it.y + cel.position.y, cel.layer.name,"
+        " cel.frameNumber, idx, idx + 1))\n"
+        "      end\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+    )
+    return _open_sprite(path) + guard + _palette_snippet(colors) + _save_sprite(path)
 
 
 def script_draw_pixels(path: Path, pixels: list[Pixel], layer: str | None, frame: int) -> str:
@@ -221,6 +256,7 @@ def script_draw_pixels(path: Path, pixels: list[Pixel], layer: str | None, frame
         "end\n"
         + puts
         + _save_sprite(path)
+        + _SNAP_REPORT
     )
 
 
@@ -252,6 +288,7 @@ def script_draw_shape(path: Path, op: ShapeOp, layer: str | None, frame: int) ->
         + extra
         + "}\n"
         + _save_sprite(path)
+        + _SNAP_REPORT
     )
 
 
@@ -494,11 +531,21 @@ def script_export_flat(path: Path, out: Path) -> str:
     q = lua_quote(str(out))
     return (
         _open_sprite(path)
+        + _JESC
         + f"if not spr:saveCopyAs({q}) then error(\"failed to export: \" .. {q}) end\n"
         + f"local f = io.open({q}, \"rb\")\n"
         + f'if not f then error("export was not written: " .. {q}) end\n'
         + "f:close()\n"
-        + f'print("{RESULT_MARKER} " .. string.format(\'{{"frames": %d}}\', #spr.frames))\n'
+        # flat formats play frames forward only; report tags whose direction
+        # the export just dropped so the caller can warn
+        + 'local anidirs = { [1] = "reverse", [2] = "pingpong", [3] = "pingpong_reverse" }\n'
+        + "local nf = {}\n"
+        + "for i = 1, #spr.tags do\n"
+        + "  local t = spr.tags[i]\n"
+        + "  local d = anidirs[t.aniDir]\n"
+        + "  if d then nf[#nf + 1] = string.format('\"%s (%s)\"', jesc(t.name), d) end\n"
+        + "end\n"
+        + f'print("{RESULT_MARKER} " .. string.format(\'{{"frames": %d, "nonforward_tags": [%s]}}\', #spr.frames, table.concat(nf, ", ")))\n'
     )
 
 

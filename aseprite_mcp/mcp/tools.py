@@ -67,6 +67,19 @@ def set_palette(path: str, colors: list[str]) -> str:
     return f"Set palette of {p.name} to {len(rgba)} colors."
 
 
+def _snap_note(stdout: str) -> str:
+    """Describe indexed-mode nearest-palette substitutions, if the script reported any."""
+    result = runner.extract_result_optional(stdout)
+    snapped = (result or {}).get("snapped") or {}
+    if not snapped:
+        return ""
+    pairs = ", ".join(f"{req} -> {got}" for req, got in sorted(snapped.items()))
+    return (
+        f" Note: {len(snapped)} color(s) not in the palette snapped to the "
+        f"nearest entries: {pairs}."
+    )
+
+
 @server.tool()
 def draw_pixels(
     path: str,
@@ -83,9 +96,9 @@ def draw_pixels(
     px = ops.validate_pixels(pixels)
     layer_name = ops.validate_layer_name(layer) if layer is not None else None
     fr = ops.validate_frame(frame)
-    runner.run_script(lua.script_draw_pixels(p, px, layer_name, fr))
+    out = runner.run_script(lua.script_draw_pixels(p, px, layer_name, fr))
     target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
-    return f"Drew {len(px)} pixel(s) on {target}, frame {fr} of {p.name}."
+    return f"Drew {len(px)} pixel(s) on {target}, frame {fr} of {p.name}.{_snap_note(out)}"
 
 
 @server.tool()
@@ -107,9 +120,39 @@ def draw_shape(
     op = ops.validate_shape(shape, points, color, filled=filled, tolerance=tolerance)
     layer_name = ops.validate_layer_name(layer) if layer is not None else None
     fr = ops.validate_frame(frame)
-    runner.run_script(lua.script_draw_shape(p, op, layer_name, fr))
+    out = runner.run_script(lua.script_draw_shape(p, op, layer_name, fr))
     target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
-    return f"Drew {shape} ({op.tool}) on {target}, frame {fr} of {p.name}."
+    return f"Drew {shape} ({op.tool}) on {target}, frame {fr} of {p.name}.{_snap_note(out)}"
+
+
+@server.tool()
+def draw_grid(
+    path: str,
+    rows: list[str],
+    legend: dict[str, str],
+    x: int = 0,
+    y: int = 0,
+    layer: str | None = None,
+    frame: int = 1,
+) -> str:
+    """Draw pixels from a character grid — the write-side twin of read_pixels.
+
+    legend maps single characters to hex colors ({'r': '#ff0000'}); rows are
+    equal-width strings, one per pixel row, with the top-left cell landing at
+    (x, y). '.' and ' ' cells are skipped (pixels underneath stay untouched);
+    a legend color of '#00000000' erases. Far more compact than draw_pixels
+    for sprite-sized art.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    px = ops.validate_grid_pixels(rows, legend, x, y)
+    layer_name = ops.validate_layer_name(layer) if layer is not None else None
+    fr = ops.validate_frame(frame)
+    out = runner.run_script(lua.script_draw_pixels(p, px, layer_name, fr))
+    target = f"layer {layer_name!r}" if layer_name else "the bottom layer"
+    return (
+        f"Drew {len(px)} pixel(s) from a {len(rows[0])}x{len(rows)} grid at "
+        f"({x}, {y}) on {target}, frame {fr} of {p.name}.{_snap_note(out)}"
+    )
 
 
 @server.tool()
@@ -124,10 +167,11 @@ def clear_region(
 ) -> str:
     """Erase a rectangular region back to transparency (raw image clear).
 
-    This is the eraser — draw_shape cannot erase because tool strokes
-    alpha-blend. width/height of 0 extend to the canvas edge (omit all four to
-    wipe the whole layer/frame). Clearing a layer/frame that has no content is
-    an error, not a silent no-op.
+    This is the eraser — draw_shape rejects transparent colors, and
+    draw_pixels/draw_grid erase single pixels with '#00000000'. width/height
+    of 0 extend to the canvas edge (omit all four to wipe the whole
+    layer/frame). Clearing a layer/frame that has no content is an error, not
+    a silent no-op.
     """
     p = ops.validate_sprite_path(path, must_exist=True)
     rect = ops.validate_clear_rect(x, y, width, height)
@@ -295,6 +339,12 @@ def export(
             info["note"] = (
                 f"sprite has {result['frames']} frames but PNG holds one image — "
                 "exported frame 1 only; use format='gif' or 'spritesheet' for animation"
+            )
+        if fmt == "gif" and result.get("nonforward_tags"):
+            info["note"] = (
+                "GIF frames always play forward — tag direction is not encoded "
+                f"({', '.join(result['nonforward_tags'])}); bake the return "
+                "frames into the sprite if the loop should bounce"
             )
         return info
 
