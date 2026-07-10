@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aseprite-mcp"
+version = "0.1.0"
+description = "Create and edit pixel art over MCP by driving Aseprite headlessly; drivable by an LLM agent."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pillow>=10.0"]
+
+[project.scripts]
+aseprite-mcp = "aseprite_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["aseprite_mcp*"]

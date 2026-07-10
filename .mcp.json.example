@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aseprite": {
+      "command": "/absolute/path/to/aseprite-mcp/.venv/bin/python",
+      "args": ["-m", "aseprite_mcp"],
+      "env": {
+        "ASEPRITE_BIN": "/Users/jscocca/Repos/aseprite/build/bin/aseprite"
+      }
+    }
+  }
+}
