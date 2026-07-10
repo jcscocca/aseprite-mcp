@@ -44,7 +44,8 @@ launches at startup and exits loudly if it doesn't.
 | `draw_shape` | Line, rectangle, ellipse (optionally filled), flood fill |
 | `add_layer` | New named layer (duplicate names rejected) |
 | `add_frame` | Append a frame (duplicate of last, or empty) with duration |
-| `preview` | Nearest-neighbor-scaled PNG of a frame, **returned as an image** so the agent sees its work |
+| `preview` | Nearest-neighbor-scaled PNG of a frame, **returned as an image** so the agent sees its work; `grid=N` overlays magenta coordinate lines every N pixels |
+| `read_pixels` | Exact pixel values for a region as a color legend + character grid — ground truth when placement matters (capped at 4096 px per read) |
 | `export` | `png`, animated `gif`, or `spritesheet` (PNG atlas + Godot-oriented JSON: frame rects, durations, animations) |
 
 The intended loop: draw a few things, `preview`, correct course, repeat, then
@@ -70,6 +71,8 @@ their bounds (pixels are drawn onto full-canvas cels so `putPixel` can't
 silently no-op), indexed-mode colors are resolved against the sprite's own
 palette in Lua (batch mode's "current palette" is not the sprite's), and
 `newFrame(n)` returns the frame at position `n` rather than the new copy.
+Erasing: `draw_pixels` sets pixels raw, so `'#00000000'` erases; `draw_shape`
+strokes alpha-blend and cannot erase.
 
 ## Development
 

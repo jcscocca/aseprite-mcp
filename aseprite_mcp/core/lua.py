@@ -277,8 +277,32 @@ def script_add_frame(path: Path, duration_ms: int, mode: str) -> str:
     )
 
 
-def script_preview(path: Path, out_png: Path, scale: int, frame: int) -> str:
+def script_preview(path: Path, out_png: Path, scale: int, frame: int, grid: int = 0) -> str:
     q = lua_quote(str(out_png))
+    # Grid lines need an exact magenta in every color mode, so the in-memory
+    # sprite is normalized to RGB first (preview never saves the sprite).
+    grid_convert = (
+        "if spr.colorMode ~= ColorMode.RGB then\n"
+        '  app.command.ChangePixelFormat{ ui = false, format = "rgb" }\n'
+        "end\n"
+        if grid > 0
+        else ""
+    )
+    grid_lines = (
+        (
+            f"local step = {grid * scale}\n"
+            "local gcol = Color{ r=255, g=0, b=255, a=255 }\n"
+            f"local gw, gh = spr.width * {scale}, spr.height * {scale}\n"
+            "for gx = step, gw - 1, step do\n"
+            "  for yy = 0, gh - 1 do img:drawPixel(gx, yy, gcol) end\n"
+            "end\n"
+            "for gy = step, gh - 1, step do\n"
+            "  for xx = 0, gw - 1 do img:drawPixel(xx, gy, gcol) end\n"
+            "end\n"
+        )
+        if grid > 0
+        else ""
+    )
     return (
         _open_sprite(path)
         + _check_frame(frame)
@@ -286,13 +310,86 @@ def script_preview(path: Path, out_png: Path, scale: int, frame: int) -> str:
         f'  error(string.format("preview would be %dx%d; keep scaled size under 4096px (canvas %dx%d, scale {scale})",\n'
         f"    spr.width * {scale}, spr.height * {scale}, spr.width, spr.height))\n"
         "end\n"
+        + grid_convert
         + "local img = Image(spr.width, spr.height, spr.colorMode)\n"
         + f"img:drawSprite(spr, {frame})\n"
         + f"img:resize{{ width = spr.width * {scale}, height = spr.height * {scale} }}\n"
+        + grid_lines
         + f"img:saveAs{{ filename = {q}, palette = spr.palettes[1] }}\n"
         + f"local f = io.open({q}, \"rb\")\n"
         + f'if not f then error("preview PNG was not written: " .. {q}) end\n'
         + "f:close()\n"
+    )
+
+
+_READ_KEYS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+
+def script_read_pixels(path: Path, rect: tuple[int, int, int, int], frame: int) -> str:
+    x, y, w, h = rect
+    return (
+        _open_sprite(path)
+        + _check_frame(frame)
+        + f"local rx, ry, rw, rh = {x}, {y}, {w}, {h}\n"
+        + "if rw == 0 then rw = spr.width - rx end\n"
+        + "if rh == 0 then rh = spr.height - ry end\n"
+        + "if rw < 1 or rh < 1 or rx + rw > spr.width or ry + rh > spr.height then\n"
+        + '  error(string.format("read region (%d,%d %dx%d) extends past the canvas (%dx%d)",\n'
+        + "    rx, ry, rw, rh, spr.width, spr.height))\n"
+        + "end\n"
+        + "if rw * rh > 4096 then\n"
+        + '  error(string.format("read region %dx%d is %d pixels; keep it at or under 4096 '
+        + '— pass a smaller x/y/width/height window", rw, rh, rw * rh))\n'
+        + "end\n"
+        + "local img = Image(spr.width, spr.height, spr.colorMode)\n"
+        + f"img:drawSprite(spr, {frame})\n"
+        + "local pc = app.pixelColor\n"
+        + f'local keys = "{_READ_KEYS}"\n'
+        + r"""
+local legend = {}
+local order = {}
+local rows = {}
+for gy = ry, ry + rh - 1 do
+  local row = {}
+  for gx = rx, rx + rw - 1 do
+    local v = img:getPixel(gx, gy)
+    local r, g, b, a = 0, 0, 0, 0
+    if spr.colorMode == ColorMode.GRAYSCALE then
+      local gv = pc.grayaV(v)
+      r, g, b, a = gv, gv, gv, pc.grayaA(v)
+    elseif spr.colorMode == ColorMode.INDEXED then
+      if v ~= spr.transparentColor then
+        local c = spr.palettes[1]:getColor(v)
+        r, g, b, a = c.red, c.green, c.blue, c.alpha
+      end
+    else
+      r, g, b, a = pc.rgbaR(v), pc.rgbaG(v), pc.rgbaB(v), pc.rgbaA(v)
+    end
+    local ch = "."
+    if a > 0 then
+      local hex
+      if a == 255 then hex = string.format("#%02x%02x%02x", r, g, b)
+      else hex = string.format("#%02x%02x%02x%02x", r, g, b, a) end
+      ch = legend[hex]
+      if ch == nil then
+        if #order >= #keys then
+          error("read region has more than " .. #keys .. " distinct colors; read a smaller region")
+        end
+        ch = keys:sub(#order + 1, #order + 1)
+        legend[hex] = ch
+        order[#order + 1] = string.format('"%s": "%s"', ch, hex)
+      end
+    end
+    row[#row + 1] = ch
+  end
+  rows[#rows + 1] = '"' .. table.concat(row) .. '"'
+end
+local legend_json = '".": "transparent"'
+if #order > 0 then legend_json = legend_json .. ", " .. table.concat(order, ", ") end
+"""
+        + f'print("{RESULT_MARKER} " .. string.format(\n'
+        + "  '{\"x\": %d, \"y\": %d, \"width\": %d, \"height\": %d, \"legend\": {%s}, \"rows\": [%s]}',\n"
+        + '  rx, ry, rw, rh, legend_json, table.concat(rows, ", ")))\n'
     )
 
 

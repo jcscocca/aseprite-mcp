@@ -166,3 +166,38 @@ def test_paths_with_quotes_are_escaped_everywhere():
     tricky = Path('/tmp/we"ird/sl\\ime.ase')
     s = lua.script_get_canvas_info(tricky)
     assert '"/tmp/we\\"ird/sl\\\\ime.ase"' in s
+
+
+def test_read_pixels_script_builds_legend_grid():
+    s = lua.script_read_pixels(SPR, rect=(2, 3, 8, 4), frame=2)
+    assert "img:drawSprite(spr, 2)" in s
+    assert "getPixel" in s
+    assert "transparent" in s  # '.' legend entry
+    assert "distinct colors" in s  # legend overflow fails loudly
+    assert "4096" in s  # area cap enforced against the real canvas size
+    assert "spr.transparentColor" in s  # indexed transparency
+    assert "palettes[1]" in s  # indexed colors resolve via the sprite palette
+    assert "grayaV" in s  # grayscale support
+    assert lua.RESULT_MARKER in s
+    assert "saveAs" not in s  # read-only: never writes the sprite
+
+
+def test_read_pixels_zero_rect_resolves_to_canvas_in_lua():
+    s = lua.script_read_pixels(SPR, rect=(0, 0, 0, 0), frame=1)
+    assert "spr.width" in s and "spr.height" in s
+    assert "past the canvas" in s
+
+
+def test_preview_script_grid_overlay():
+    s = lua.script_preview(SPR, Path("/tmp/p.png"), scale=8, frame=1, grid=8)
+    assert "ChangePixelFormat" in s  # normalized to RGB so the grid color is exact in any mode
+    assert 'format = "rgb"' in s
+    assert "Color{ r=255, g=0, b=255, a=255 }" in s  # magenta lines
+    assert "64" in s  # line spacing = grid * scale
+    assert "drawPixel" in s
+
+
+def test_preview_script_no_grid_by_default():
+    s = lua.script_preview(SPR, Path("/tmp/p.png"), scale=8, frame=1)
+    assert "ChangePixelFormat" not in s
+    assert "drawPixel" not in s

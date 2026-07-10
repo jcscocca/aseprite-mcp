@@ -242,3 +242,70 @@ def test_out_of_bounds_pixel_fails(tmp_path):
     tools.create_canvas(spr, 4, 4)
     with pytest.raises(AsepriteError, match="out of bounds"):
         tools.draw_pixels(spr, [{"x": 10, "y": 0, "color": RED}])
+
+
+def test_read_pixels_legend_grid(tmp_path):
+    spr = str(tmp_path / "read.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(
+        spr,
+        [
+            {"x": 0, "y": 0, "color": RED},
+            {"x": 1, "y": 0, "color": RED},
+            {"x": 3, "y": 3, "color": "#0000ff80"},
+        ],
+    )
+    result = tools.read_pixels(spr)
+    assert (result["x"], result["y"]) == (0, 0)
+    assert (result["width"], result["height"]) == (4, 4)
+    assert result["legend"]["."] == "transparent"
+    assert result["legend"]["a"] == "#ff0000"  # scan order: 'a' is first color seen
+    assert result["legend"]["b"] == "#0000ff80"  # alpha preserved in legend hex
+    assert result["rows"] == ["aa..", "....", "....", "...b"]
+
+
+def test_read_pixels_subregion_and_indexed_palette(tmp_path):
+    spr = str(tmp_path / "readix.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="gameboy")
+    tools.draw_pixels(spr, [{"x": 1, "y": 1, "color": "#8bac0f"}])
+    result = tools.read_pixels(spr, x=1, y=1, width=2, height=1)
+    assert result["rows"] == ["a."]
+    assert result["legend"]["a"] == "#8bac0f"
+
+
+def test_read_pixels_oversize_region_fails(tmp_path):
+    spr = str(tmp_path / "big.ase")
+    tools.create_canvas(spr, 65, 65)
+    with pytest.raises(AsepriteError, match="4096"):
+        tools.read_pixels(spr)
+
+
+def test_read_pixels_rect_past_canvas_fails(tmp_path):
+    spr = str(tmp_path / "oobr.ase")
+    tools.create_canvas(spr, 4, 4)
+    with pytest.raises(AsepriteError, match="canvas"):
+        tools.read_pixels(spr, x=2, y=0, width=4, height=1)
+
+
+def test_preview_grid_overlay_lines(tmp_path):
+    spr = str(tmp_path / "grid.ase")
+    tools.create_canvas(spr, 4, 4)
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": RED}])
+    img = PILImage.open(io.BytesIO(tools.preview(spr, scale=8, grid=2).data)).convert("RGBA")
+    assert img.size == (32, 32)
+    magenta = (255, 0, 255, 255)
+    assert img.getpixel((16, 3)) == magenta  # vertical line every grid*scale px
+    assert img.getpixel((3, 16)) == magenta  # horizontal line
+    assert img.getpixel((8, 3)) != magenta  # grid=2: no line between boundaries
+    assert img.getpixel((0, 0)) == (255, 0, 0, 255)  # art preserved off the lines
+    assert img.getpixel((0, 20))[3] == 0  # no line drawn along the x=0 edge
+
+
+def test_preview_grid_on_indexed_sprite(tmp_path):
+    # magenta lines must appear even when the palette has no magenta
+    spr = str(tmp_path / "gridix.ase")
+    tools.create_canvas(spr, 4, 4, color_mode="indexed", palette="gameboy")
+    tools.draw_pixels(spr, [{"x": 0, "y": 0, "color": "#8bac0f"}])
+    img = PILImage.open(io.BytesIO(tools.preview(spr, scale=8, grid=1).data)).convert("RGBA")
+    assert img.getpixel((8, 2)) == (255, 0, 255, 255)
+    assert img.getpixel((2, 2)) == (0x8B, 0xAC, 0x0F, 255)  # art color untouched

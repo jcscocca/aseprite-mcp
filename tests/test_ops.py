@@ -255,3 +255,31 @@ def test_columns_and_padding_ranges():
         ops.validate_columns(-1)
     with pytest.raises(ValueError, match="padding"):
         ops.validate_padding(65)
+
+
+# --- read_pixels rect ---
+
+
+def test_read_rect_zero_means_full_canvas():
+    assert ops.validate_read_rect(0, 0, 0, 0) == (0, 0, 0, 0)
+
+
+def test_read_rect_explicit():
+    assert ops.validate_read_rect(2, 3, 10, 4) == (2, 3, 10, 4)
+
+
+def test_read_rect_negative_origin_fails():
+    with pytest.raises(ValueError, match="x"):
+        ops.validate_read_rect(-1, 0, 4, 4)
+
+
+def test_read_rect_area_cap():
+    with pytest.raises(ValueError, match="4096"):
+        ops.validate_read_rect(0, 0, 65, 64)
+
+
+def test_grid_zero_is_off_and_range_enforced():
+    assert ops.validate_grid(0) == 0
+    assert ops.validate_grid(8) == 8
+    with pytest.raises(ValueError, match="grid"):
+        ops.validate_grid(-1)

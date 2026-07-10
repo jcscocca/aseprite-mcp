@@ -136,25 +136,51 @@ def add_frame(path: str, duration_ms: int = 100, mode: str = "duplicate") -> dic
 
 
 @server.tool()
-def preview(path: str, scale: int = 8, frame: int = 1) -> MCPImage:
+def preview(path: str, scale: int = 8, frame: int = 1, grid: int = 0) -> MCPImage:
     """Render a frame as a nearest-neighbor-scaled PNG and return it as an image.
 
     Call this after every few edits to see the current state of the art and
     correct course. scale=8 turns a 16x16 sprite into a readable 128x128 image.
+    grid=N overlays magenta lines every N source pixels (grid=1 outlines every
+    pixel) so you can count exact coordinates; 0 = off.
     """
     p = ops.validate_sprite_path(path, must_exist=True)
     s = ops.validate_scale(scale)
     fr = ops.validate_frame(frame)
+    g = ops.validate_grid(grid)
     fd, out_png = tempfile.mkstemp(suffix=".png", prefix="aseprite_mcp_preview_")
     os.close(fd)
     try:
-        runner.run_script(lua.script_preview(p, Path(out_png), s, fr))
+        runner.run_script(lua.script_preview(p, Path(out_png), s, fr, grid=g))
         data = Path(out_png).read_bytes()
     finally:
         os.unlink(out_png)
     if not data:
         raise runner.AsepriteError(f"preview of {p} produced an empty PNG")
     return MCPImage(data=data, format="png")
+
+
+@server.tool()
+def read_pixels(
+    path: str,
+    x: int = 0,
+    y: int = 0,
+    width: int = 0,
+    height: int = 0,
+    frame: int = 1,
+) -> dict:
+    """Read back rendered pixels as a color legend + character grid — exact ground
+    truth for what a region looks like (use it to verify placement or debug a
+    draw that didn't land where expected).
+
+    Returns {'legend': {'.': 'transparent', 'a': '#rrggbb', ...}, 'rows': [...]},
+    one string per pixel row. width/height of 0 extend to the canvas edge; regions
+    are capped at 4096 pixels (e.g. 64x64) — read larger sprites in chunks.
+    """
+    p = ops.validate_sprite_path(path, must_exist=True)
+    rect = ops.validate_read_rect(x, y, width, height)
+    fr = ops.validate_frame(frame)
+    return runner.extract_result(runner.run_script(lua.script_read_pixels(p, rect, fr)))
 
 
 @server.tool()

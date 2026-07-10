@@ -24,6 +24,7 @@ MAX_CANVAS = 65535
 MAX_DURATION_MS = 65535
 MAX_SCALE = 64
 MAX_PADDING = 64
+MAX_READ_AREA = 4096
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,23 @@ def validate_duration_ms(ms) -> int:
 
 def validate_scale(scale) -> int:
     return _int(scale, "scale", 1, MAX_SCALE)
+
+
+def validate_grid(grid) -> int:
+    return _int(grid, "grid (source pixels between lines, 0 = off)", 0, MAX_CANVAS)
+
+
+def validate_read_rect(x, y, width, height) -> tuple[int, int, int, int]:
+    rx = _int(x, "x", 0, MAX_CANVAS)
+    ry = _int(y, "y", 0, MAX_CANVAS)
+    rw = _int(width, "width (0 = to canvas edge)", 0, MAX_CANVAS)
+    rh = _int(height, "height (0 = to canvas edge)", 0, MAX_CANVAS)
+    if rw and rh and rw * rh > MAX_READ_AREA:
+        raise ValueError(
+            f"read region {rw}x{rh} is {rw * rh} pixels; keep it at or under "
+            f"{MAX_READ_AREA} (e.g. 64x64) and read in chunks"
+        )
+    return (rx, ry, rw, rh)
 
 
 def resolve_palette(palette) -> list[RGBA] | None:
