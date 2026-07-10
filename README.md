@@ -29,9 +29,9 @@ Copy `.mcp.json.example` to your MCP client config and fix the paths:
 }
 ```
 
-`ASEPRITE_BIN` points at the Aseprite executable (default:
-`/Users/jscocca/Repos/aseprite/build/bin/aseprite`). The server verifies it
-launches at startup and exits loudly if it doesn't.
+`ASEPRITE_BIN` points at the Aseprite executable; when unset, `aseprite` is
+looked up on PATH before falling back to a local dev build path. The server
+verifies the binary launches at startup and exits loudly if it doesn't.
 
 ## 2. Tools
 

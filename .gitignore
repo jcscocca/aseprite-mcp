@@ -8,3 +8,4 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mcp.json
+.claude/settings.local.json

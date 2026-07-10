@@ -12,8 +12,21 @@ def test_env_var_overrides_default(monkeypatch):
     assert runner.aseprite_bin() == "/custom/aseprite"
 
 
-def test_default_bin_used_when_env_unset(monkeypatch):
+def test_path_lookup_used_when_env_unset(monkeypatch):
     monkeypatch.delenv("ASEPRITE_BIN", raising=False)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/from/path/aseprite")
+    assert runner.aseprite_bin() == "/from/path/aseprite"
+
+
+def test_env_var_beats_path_lookup(monkeypatch):
+    monkeypatch.setenv("ASEPRITE_BIN", "/custom/aseprite")
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/from/path/aseprite")
+    assert runner.aseprite_bin() == "/custom/aseprite"
+
+
+def test_default_bin_used_when_env_and_path_unset(monkeypatch):
+    monkeypatch.delenv("ASEPRITE_BIN", raising=False)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
     assert runner.aseprite_bin() == runner.DEFAULT_ASEPRITE_BIN
 
 

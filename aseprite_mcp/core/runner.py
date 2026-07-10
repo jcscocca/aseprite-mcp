@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,7 +24,11 @@ class AsepriteError(RuntimeError):
 
 
 def aseprite_bin() -> str:
-    return os.environ.get("ASEPRITE_BIN", DEFAULT_ASEPRITE_BIN)
+    """$ASEPRITE_BIN, else `aseprite` on PATH, else the local dev build."""
+    env = os.environ.get("ASEPRITE_BIN")
+    if env:
+        return env
+    return shutil.which("aseprite") or DEFAULT_ASEPRITE_BIN
 
 
 def verify_binary() -> str:
