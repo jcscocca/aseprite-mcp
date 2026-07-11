@@ -47,6 +47,7 @@ jobs:
             -DENABLE_SCRIPTING=ON
           cmake --build aseprite-src/build
           cp -rL aseprite-src/build/bin aseprite-bin
+          rm -rf aseprite-src
       # save immediately so a test failure doesn't throw away the build
       - name: Save Aseprite cache
         if: steps.cache.outputs.cache-hit != 'true'
@@ -64,4 +65,4 @@ jobs:
       - name: Run the full suite
         env:
           ASEPRITE_BIN: ${{ github.workspace }}/aseprite-bin/aseprite
-        run: pytest -q
+        run: pytest -q tests
