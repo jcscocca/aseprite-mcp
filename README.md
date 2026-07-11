@@ -38,6 +38,7 @@ verifies the binary launches at startup and exits loudly if it doesn't.
 | Tool | Purpose |
 |---|---|
 | `create_canvas` | New sprite: size, color mode (rgb/grayscale/indexed), palette preset (`gameboy`, `pico8`, `sweetie16`) or hex list |
+| `import_image` | New sprite from an existing PNG (≤1024px per side; PNG only) — optional conversion to grayscale or indexed (quantized against a required palette preset/hex list) |
 | `get_canvas_info` | Size, color mode, layers, frames + durations, palette, tags |
 | `set_palette` | Replace the palette with 1–256 hex colors |
 | `draw_grid` | Character-grid drawing: `legend` (char → hex color) + `rows` (strings), the write-side twin of `read_pixels` — the compact way to draw sprite-sized art |

@@ -440,3 +440,63 @@ def test_grid_zero_is_off_and_range_enforced():
     assert ops.validate_grid(8) == 8
     with pytest.raises(ValueError, match="grid"):
         ops.validate_grid(-1)
+
+
+# --- import_image source ---
+
+
+def _write_png_header(path, width, height):
+    ihdr = (
+        (13).to_bytes(4, "big") + b"IHDR"
+        + width.to_bytes(4, "big") + height.to_bytes(4, "big")
+        + b"\x08\x06\x00\x00\x00" + b"\x00\x00\x00\x00"
+    )
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + ihdr)
+
+
+def test_import_source_ok_returns_path_and_size(tmp_path):
+    src = tmp_path / "art.png"
+    _write_png_header(src, 16, 12)
+    p, w, h = ops.validate_import_source(str(src))
+    assert p == src
+    assert (w, h) == (16, 12)
+
+
+def test_import_source_rejects_non_png_suffix(tmp_path):
+    src = tmp_path / "art.gif"
+    src.write_bytes(b"GIF89a")
+    with pytest.raises(ValueError, match="PNG"):
+        ops.validate_import_source(str(src))
+
+
+def test_import_source_missing_file_fails(tmp_path):
+    with pytest.raises(ValueError, match="does not exist"):
+        ops.validate_import_source(str(tmp_path / "nope.png"))
+
+
+@pytest.mark.parametrize("bad", ["", None, 42])
+def test_import_source_rejects_non_string(bad):
+    with pytest.raises(ValueError, match="source"):
+        ops.validate_import_source(bad)
+
+
+def test_import_source_rejects_bad_signature(tmp_path):
+    src = tmp_path / "fake.png"
+    src.write_bytes(b"not a png at all, definitely")
+    with pytest.raises(ValueError, match="not a valid PNG"):
+        ops.validate_import_source(str(src))
+
+
+def test_import_source_1024_is_allowed(tmp_path):
+    src = tmp_path / "big.png"
+    _write_png_header(src, 1024, 1024)
+    _, w, h = ops.validate_import_source(str(src))
+    assert (w, h) == (1024, 1024)
+
+
+@pytest.mark.parametrize("w,h", [(1025, 8), (8, 1025)])
+def test_import_source_oversize_fails_with_hint(tmp_path, w, h):
+    src = tmp_path / "huge.png"
+    _write_png_header(src, w, h)
+    with pytest.raises(ValueError, match="1024"):
+        ops.validate_import_source(str(src))

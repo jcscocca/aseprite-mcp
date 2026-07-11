@@ -400,3 +400,34 @@ def test_preview_script_no_grid_by_default():
     s = lua.script_preview(SPR, Path("/tmp/p.png"), scale=8, frame=1)
     assert "ChangePixelFormat" not in s
     assert "drawPixel" not in s
+
+
+def test_import_image_opens_source_and_saves_target():
+    s = lua.script_import_image(Path("/tmp/art/hero.png"), SPR, "rgb", None)
+    assert 'app.open("/tmp/art/hero.png")' in s
+    assert 'error("could not open source image' in s
+    assert 'saveAs("/tmp/art/slime.ase")' in s
+    assert lua.RESULT_MARKER in s
+    assert '"width": %d' in s and '"frames": %d' in s
+
+
+def test_import_image_rgb_converts_only_non_rgb_sources():
+    s = lua.script_import_image(Path("/tmp/a.png"), SPR, "rgb", None)
+    assert "if spr.colorMode ~= ColorMode.RGB then" in s
+    assert 'app.command.ChangePixelFormat{ ui = false, format = "rgb" }' in s
+    assert "Palette" not in s
+
+
+def test_import_image_indexed_sets_palette_before_converting():
+    pal = [RGBA(0, 0, 0), RGBA(255, 255, 255)]
+    s = lua.script_import_image(Path("/tmp/a.png"), SPR, "indexed", pal)
+    # normalize to rgb first, quantize against the sprite palette last
+    assert s.index('format = "rgb"') < s.index("spr:setPalette(pal)")
+    assert s.index("spr:setPalette(pal)") < s.index('format = "indexed"')
+    assert "if spr.colorMode ~= ColorMode.INDEXED then" in s
+
+
+def test_import_image_grayscale_converts():
+    s = lua.script_import_image(Path("/tmp/a.png"), SPR, "grayscale", None)
+    assert 'app.command.ChangePixelFormat{ ui = false, format = "grayscale" }' in s
+    assert "if spr.colorMode ~= ColorMode.GRAYSCALE then" in s

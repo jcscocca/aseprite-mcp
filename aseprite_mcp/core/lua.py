@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .ops import RGBA, Pixel, ShapeOp
+from .ops import COLOR_MODES, RGBA, Pixel, ShapeOp
 
 RESULT_MARKER = "AMCP_RESULT"
 
@@ -146,6 +146,40 @@ def script_create_canvas(
     parts.append(_JESC)
     parts.append(
         f'print("{RESULT_MARKER} " .. string.format(\'{{"layer": "%s"}}\', jesc(spr.layers[1].name)))\n'
+    )
+    return "".join(parts)
+
+
+def script_import_image(
+    source: Path, path: Path, color_mode: str, palette: list[RGBA] | None
+) -> str:
+    sq = lua_quote(str(source))
+    mode_lua = COLOR_MODES[color_mode]
+    convert = (
+        f"if spr.colorMode ~= {mode_lua} then\n"
+        f'  app.command.ChangePixelFormat{{ ui = false, format = "{color_mode}" }}\n'
+        "end\n"
+    )
+    parts = [
+        f"local spr = app.open({sq})\n"
+        f'if not spr then error("could not open source image: " .. {sq}) end\n'
+    ]
+    if palette is not None:
+        # normalize to RGB before replacing the palette: on an indexed source,
+        # setPalette re-colors existing indices instead of re-quantizing
+        parts.append(
+            "if spr.colorMode ~= ColorMode.RGB then\n"
+            '  app.command.ChangePixelFormat{ ui = false, format = "rgb" }\n'
+            "end\n"
+        )
+        parts.append(_palette_snippet(palette))
+        if color_mode != "rgb":
+            parts.append(convert)
+    else:
+        parts.append(convert)
+    parts.append(_save_sprite(path))
+    parts.append(
+        f'print("{RESULT_MARKER} " .. string.format(\'{{"width": %d, "height": %d, "frames": %d}}\', spr.width, spr.height, #spr.frames))\n'
     )
     return "".join(parts)
 

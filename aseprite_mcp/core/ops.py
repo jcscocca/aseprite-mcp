@@ -100,6 +100,36 @@ def validate_sprite_path(path, *, must_exist: bool) -> Path:
     return p
 
 
+MAX_IMPORT_SIDE = 1024
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def validate_import_source(source) -> tuple[Path, int, int]:
+    """Validate a PNG to import; return (path, width, height) from its header."""
+    if not isinstance(source, str) or not source:
+        raise ValueError(f"source must be a non-empty string, got {source!r}")
+    p = Path(source).expanduser()
+    if p.suffix.lower() != ".png":
+        raise ValueError(
+            f"source {source!r} must be a .png file — only PNG import is "
+            "supported (convert other formats to PNG first)"
+        )
+    if not p.is_file():
+        raise ValueError(f"source image does not exist: {p}")
+    header = p.read_bytes()[:24]
+    if len(header) < 24 or not header.startswith(_PNG_SIGNATURE) or header[12:16] != b"IHDR":
+        raise ValueError(f"{p} is not a valid PNG file (bad PNG signature)")
+    width = int.from_bytes(header[16:20], "big")
+    height = int.from_bytes(header[20:24], "big")
+    if width > MAX_IMPORT_SIDE or height > MAX_IMPORT_SIDE:
+        raise ValueError(
+            f"source PNG is {width}x{height} — this server is for pixel art, "
+            f"so each side must be at or under {MAX_IMPORT_SIDE}px; downscale "
+            "the image first"
+        )
+    return (p, width, height)
+
+
 def validate_out_path(path, format: str) -> Path:
     if not isinstance(path, str) or not path:
         raise ValueError(f"out path must be a non-empty string, got {path!r}")

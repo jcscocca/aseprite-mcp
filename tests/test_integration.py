@@ -747,3 +747,67 @@ def test_preview_grid_on_indexed_sprite(tmp_path):
     img = PILImage.open(io.BytesIO(tools.preview(spr, scale=8, grid=1).data)).convert("RGBA")
     assert img.getpixel((8, 2)) == (255, 0, 255, 255)
     assert img.getpixel((2, 2)) == (0x8B, 0xAC, 0x0F, 255)  # art color untouched
+
+
+def _write_png(path, pixels, size):
+    img = PILImage.new("RGBA", size, (0, 0, 0, 0))
+    for xy, rgba in pixels.items():
+        img.putpixel(xy, rgba)
+    img.save(path)
+
+
+def test_import_image_roundtrips_pixels(tmp_path):
+    src = tmp_path / "hero.png"
+    _write_png(src, {(0, 0): (255, 0, 0, 255), (3, 2): (0, 0, 255, 255)}, (4, 3))
+    spr = str(tmp_path / "hero.ase")
+    msg = tools.import_image(str(src), spr)
+    assert "4x3" in msg and "rgb" in msg
+    info = tools.get_canvas_info(spr)
+    assert (info["width"], info["height"]) == (4, 3)
+    assert info["color_mode"] == "rgb"
+    assert len(info["frames"]) == 1
+    px = tools.read_pixels(spr)
+    assert px["rows"][0][0] != "." and px["legend"][px["rows"][0][0]] == RED
+    assert px["rows"][2][3] != "." and px["legend"][px["rows"][2][3]] == BLUE
+    assert px["rows"][1][1] == "."  # transparency preserved
+
+
+def test_import_image_indexed_quantizes_to_palette(tmp_path):
+    src = tmp_path / "flag.png"
+    # colors slightly off the target palette must snap to it; (2,0) stays transparent
+    _write_png(src, {(0, 0): (250, 5, 5, 255), (1, 0): (5, 5, 250, 255)}, (3, 1))
+    spr = str(tmp_path / "flag.ase")
+    msg = tools.import_image(str(src), spr, color_mode="indexed", palette=[RED, GREEN, BLUE])
+    # a transparent entry is prepended as the mask so index 0 doesn't eat a user color
+    assert "transparent" in msg
+    info = tools.get_canvas_info(spr)
+    assert info["color_mode"] == "indexed"
+    assert info["palette"][1:4] == [RED, GREEN, BLUE]
+    px = tools.read_pixels(spr)
+    assert px["legend"][px["rows"][0][0]] == RED
+    assert px["legend"][px["rows"][0][1]] == BLUE
+    assert px["rows"][0][2] == "."
+
+
+def test_import_image_indexed_needs_palette(tmp_path):
+    src = tmp_path / "x.png"
+    _write_png(src, {}, (2, 2))
+    with pytest.raises(ValueError, match="palette"):
+        tools.import_image(str(src), str(tmp_path / "x.ase"), color_mode="indexed")
+
+
+def test_import_image_refuses_silent_overwrite(tmp_path):
+    src = tmp_path / "a.png"
+    _write_png(src, {(0, 0): (255, 0, 0, 255)}, (2, 2))
+    spr = str(tmp_path / "a.ase")
+    tools.import_image(str(src), spr)
+    with pytest.raises(ValueError, match="overwrite"):
+        tools.import_image(str(src), spr)
+    tools.import_image(str(src), spr, overwrite=True)
+
+
+def test_import_image_oversize_fails(tmp_path):
+    src = tmp_path / "big.png"
+    PILImage.new("RGBA", (1025, 2)).save(src)
+    with pytest.raises(ValueError, match="1024"):
+        tools.import_image(str(src), str(tmp_path / "big.ase"))

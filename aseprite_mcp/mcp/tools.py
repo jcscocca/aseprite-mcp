@@ -52,6 +52,61 @@ def create_canvas(
 
 
 @server.tool()
+def import_image(
+    source: str,
+    path: str,
+    color_mode: str = "rgb",
+    palette: str | list[str] | None = None,
+    overwrite: bool = False,
+) -> str:
+    """Create a new Aseprite sprite file from an existing PNG (PNG only).
+
+    color_mode: 'rgb', 'grayscale' or 'indexed' — the source is converted when
+    it differs. 'indexed' requires a palette (a preset name or hex list); the
+    image is quantized against it, with a transparent entry added at index 0
+    when the palette has none (indexed transparency needs one). Sources over
+    1024px on a side are refused (downscale first — this server is for pixel
+    art). Refuses to replace an existing file unless overwrite=True.
+    """
+    p = ops.validate_sprite_path(path, must_exist=False)
+    if p.exists() and not overwrite:
+        raise ValueError(
+            f"{p} already exists — pass overwrite=True to replace it, or pick another path"
+        )
+    src, _, _ = ops.validate_import_source(source)
+    ops.validate_color_mode(color_mode)
+    colors = ops.resolve_palette(palette)
+    palette_note = ""
+    if color_mode == "indexed":
+        if colors is None:
+            raise ValueError(
+                "importing to indexed needs a palette to quantize against — pass "
+                "a preset name ('gameboy', 'pico8', 'sweetie16') or a list of hex colors"
+            )
+        # the conversion reserves a mask index for transparency; without a
+        # fully transparent entry it takes index 0 and that color is lost
+        if not any(c.a == 0 for c in colors):
+            if len(colors) == 256:
+                raise ValueError(
+                    "a 256-color palette leaves no room for the transparent "
+                    "entry indexed conversion needs at index 0 — include one "
+                    "('#00000000') or drop a color"
+                )
+            colors = [ops.RGBA(0, 0, 0, 0)] + colors
+            palette_note = (
+                f", palette: {len(colors)} colors (transparent entry added at index 0)"
+            )
+    if colors and not palette_note:
+        palette_note = f", palette: {len(colors)} colors"
+    script = lua.script_import_image(src, p, color_mode, colors)
+    result = runner.extract_result(runner.run_script(script))
+    return (
+        f"Imported {src.name} as a {result['width']}x{result['height']} "
+        f"{color_mode} sprite at {p} ({result['frames']} frame(s){palette_note})."
+    )
+
+
+@server.tool()
 def get_canvas_info(path: str) -> dict:
     """Inspect a sprite: size, color mode, layers, frames with durations, and palette."""
     p = ops.validate_sprite_path(path, must_exist=True)
