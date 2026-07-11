@@ -796,6 +796,17 @@ def test_import_image_indexed_needs_palette(tmp_path):
         tools.import_image(str(src), str(tmp_path / "x.ase"), color_mode="indexed")
 
 
+def test_import_image_grayscale_rejects_palette(tmp_path):
+    # grayscale conversion replaces every palette with a gray ramp — a caller
+    # palette would be silently discarded, so refuse it
+    src = tmp_path / "g.png"
+    _write_png(src, {}, (2, 2))
+    with pytest.raises(ValueError, match="grayscale"):
+        tools.import_image(
+            str(src), str(tmp_path / "g.ase"), color_mode="grayscale", palette=[RED]
+        )
+
+
 def test_import_image_refuses_silent_overwrite(tmp_path):
     src = tmp_path / "a.png"
     _write_png(src, {(0, 0): (255, 0, 0, 255)}, (2, 2))

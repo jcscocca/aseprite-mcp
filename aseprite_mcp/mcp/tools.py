@@ -76,6 +76,11 @@ def import_image(
     src, _, _ = ops.validate_import_source(source)
     ops.validate_color_mode(color_mode)
     colors = ops.resolve_palette(palette)
+    if color_mode == "grayscale" and colors is not None:
+        raise ValueError(
+            "grayscale conversion replaces the palette with a gray ramp — "
+            "omit palette, or use color_mode='indexed' to keep it"
+        )
     palette_note = ""
     if color_mode == "indexed":
         if colors is None:

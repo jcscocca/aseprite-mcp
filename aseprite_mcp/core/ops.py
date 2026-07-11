@@ -116,7 +116,8 @@ def validate_import_source(source) -> tuple[Path, int, int]:
         )
     if not p.is_file():
         raise ValueError(f"source image does not exist: {p}")
-    header = p.read_bytes()[:24]
+    with p.open("rb") as f:
+        header = f.read(24)
     if len(header) < 24 or not header.startswith(_PNG_SIGNATURE) or header[12:16] != b"IHDR":
         raise ValueError(f"{p} is not a valid PNG file (bad PNG signature)")
     width = int.from_bytes(header[16:20], "big")
