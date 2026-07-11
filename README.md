@@ -95,6 +95,12 @@ pingpong/reverse direction the format drops. Failed scripts raise with
 Aseprite's output; set `ASEPRITE_MCP_DEBUG=1` to also include the generated
 Lua source.
 
+Some of these guarded behaviors are build-specific (e.g. `draw_shape`'s
+alpha-0 erase quirk in batch mode), so the server logs the exact binary it
+drives at startup — `aseprite-mcp: driving Aseprite <version>` on stderr.
+The behaviors above were verified against Aseprite v1.3.17 (built from
+source at commit d1624d9d0).
+
 ## Development
 
 ```bash
@@ -105,6 +111,11 @@ Lua source.
 Unit tests (validation, codegen, runner plumbing) need no binary. Integration
 tests run the real Aseprite and assert on exported PNG pixels with Pillow;
 they skip cleanly when `ASEPRITE_BIN` is missing.
+
+Per-push CI runs only the unit layers. The `integration` workflow builds a
+headless CLI-only Aseprite (no Skia) pinned to v1.3.17, caches the binary,
+and runs the full suite — trigger it manually from the Actions tab, or let
+the twice-weekly schedule keep it (and the cache) fresh.
 
 ## License
 

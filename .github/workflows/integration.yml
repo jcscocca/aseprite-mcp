@@ -1,0 +1,67 @@
+# Runs the full suite — integration layer included — against a real Aseprite.
+#
+# Building Aseprite with its GUI needs Skia and is too slow/fragile for
+# per-push CI, so this job builds the CLI-only variant (LAF_BACKEND=none, no
+# Skia — the same ubuntu/cli/lua combination Aseprite's own CI exercises),
+# pins it to $ASEPRITE_REF, and caches the resulting binary. Cache hits run
+# the suite in a couple of minutes; misses rebuild (~20 min). Scheduled twice
+# a week to stay ahead of GitHub's 7-day cache eviction.
+name: integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1,4"
+
+env:
+  ASEPRITE_REF: v1.3.17
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore cached Aseprite
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: aseprite-bin
+          key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
+      # runtime libs are needed on cache hits too; the -dev packages pull them in
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build \
+            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
+            libfontconfig1-dev
+      - name: Build Aseprite (CLI-only, no Skia)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch "$ASEPRITE_REF" --depth 1 \
+            --recurse-submodules --shallow-submodules \
+            https://github.com/aseprite/aseprite.git aseprite-src
+          cmake -S aseprite-src -B aseprite-src/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DLAF_BACKEND=none \
+            -DENABLE_SCRIPTING=ON
+          cmake --build aseprite-src/build
+          cp -rL aseprite-src/build/bin aseprite-bin
+      # save immediately so a test failure doesn't throw away the build
+      - name: Save Aseprite cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: aseprite-bin
+          key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
+      # fail here rather than letting the integration tests silently skip
+      - name: Verify the binary runs
+        run: ./aseprite-bin/aseprite --version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - name: Run the full suite
+        env:
+          ASEPRITE_BIN: ${{ github.workspace }}/aseprite-bin/aseprite
+        run: pytest -q
