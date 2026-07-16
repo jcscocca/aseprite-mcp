@@ -1,15 +1,23 @@
 # Runs the full suite — integration layer included — against a real Aseprite.
 #
-# Building Aseprite with its GUI needs Skia and is too slow/fragile for
-# per-push CI, so this job builds the CLI-only variant (LAF_BACKEND=none, no
-# Skia — the same ubuntu/cli/lua combination Aseprite's own CI exercises),
-# pins it to $ASEPRITE_REF, and caches the resulting binary. Cache hits run
-# the suite in a couple of minutes; misses rebuild (~20 min). Scheduled twice
-# a week to stay ahead of GitHub's 7-day cache eviction.
+# Building Aseprite with its GUI needs Skia and is too slow/fragile for CI, so
+# this job builds the CLI-only variant (LAF_BACKEND=none, no Skia — the same
+# ubuntu/cli/lua combination Aseprite's own CI exercises), pins it to
+# $ASEPRITE_REF, and caches the resulting binary. Cache hits run the suite in a
+# couple of minutes; misses rebuild (~20 min).
+#
+# PRs and pushes to main gate on the integration layer; they restore main's
+# cached binary, so they normally run in a couple of minutes. The push-to-main
+# run reseeds that shared cache — PR branches can only read main's cache, not
+# each other's — and the schedule is a keepalive backstop that refreshes it
+# during quiet spells so it never hits GitHub's 7-day eviction.
 name: integration
 
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 6 * * 1,4"
 
