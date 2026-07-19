@@ -6,20 +6,15 @@
 # $ASEPRITE_REF, and caches the resulting binary. Cache hits run the suite in a
 # couple of minutes; misses rebuild (~20 min).
 #
-# PRs and pushes to main gate on the integration layer; they restore main's
-# cached binary, so they normally run in a couple of minutes. The push-to-main
-# run reseeds that shared cache — PR branches can only read main's cache, not
-# each other's — and the schedule is a keepalive backstop that refreshes it
-# during quiet spells so it never hits GitHub's 7-day eviction.
+# Pushes to main restore and reseed the cached binary, so they normally run in
+# a couple of minutes. After a quiet week GitHub's 7-day eviction drops the
+# cache and the next run rebuilds it once.
 name: integration
 
 on:
   workflow_dispatch:
-  pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: "17 6 * * 1,4"
 
 env:
   ASEPRITE_REF: v1.3.17
