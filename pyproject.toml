@@ -9,7 +9,7 @@ description = "Create and edit pixel art over MCP by driving Aseprite headlessly
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
 ]
 
 [project.optional-dependencies]
