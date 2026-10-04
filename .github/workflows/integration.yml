@@ -21,23 +21,39 @@ env:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, thinkpad]
+    defaults:
+      run:
+        working-directory: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
+          clean: true
+      # Each registration has its own _work root; each job checks out a fresh subdirectory.
+      # GitHub Runner cleans RUNNER_TEMP and terminates processes carrying this job's tracking ID.
+      - name: Isolate Linux job environment
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          job_tmp="$RUNNER_TEMP/ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir -p "$job_tmp" "$HOME/.cache"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
+          # Do not accidentally invoke Windows executables through WSL interop.
+          linux_path=$(printf '%s' "$PATH" | tr ':' '\n' | sed '/^\/mnt\/[a-zA-Z]\//d' | paste -sd:)
+          echo "PATH=$linux_path" >> "$GITHUB_ENV"
       - name: Restore cached Aseprite
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: aseprite-bin
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin
           key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
       # runtime libs are needed on cache hits too; the -dev packages pull them in
-      - name: Install dependencies
+      - name: Check preinstalled build dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ninja-build \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
-            libfontconfig1-dev
+          cmake --version
+          ninja --version
+          pkg-config --exists pixman-1 freetype2 harfbuzz x11 xcursor xi xrandr gl fontconfig
       - name: Build Aseprite (CLI-only, no Skia)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -56,7 +72,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: aseprite-bin
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin
           key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
       # fail here rather than letting the integration tests silently skip
       - name: Verify the binary runs
@@ -64,8 +80,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Isolate Python dependencies and temporary files
+        shell: python {0}
+        run: |
+          import os, pathlib, tempfile, venv
+          root = pathlib.Path(tempfile.mkdtemp(prefix="ci-python-", dir=os.environ["RUNNER_TEMP"]))
+          venv.create(root / "venv", with_pip=True)
+          (root / "tmp").mkdir()
+          with open(os.environ["GITHUB_PATH"], "a") as output:
+              print(root / "venv" / ("Scripts" if os.name == "nt" else "bin"), file=output)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print("VIRTUAL_ENV=" + str(root / "venv"), file=output)
+              print("PYTHONNOUSERSITE=1", file=output)
+              for key in ("TMPDIR", "TMP", "TEMP"):
+                  print(key + "=" + str(root / "tmp"), file=output)
       - run: pip install -e ".[dev]"
       - name: Run the full suite
         env:
-          ASEPRITE_BIN: ${{ github.workspace }}/aseprite-bin/aseprite
+          ASEPRITE_BIN: ${{ github.workspace }}/work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin/aseprite
         run: pytest -q tests

@@ -6,15 +6,47 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, thinkpad]
     strategy:
       matrix:
         python-version: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
+          clean: true
+      # Each registration has its own _work root; each job checks out a fresh subdirectory.
+      # GitHub Runner cleans RUNNER_TEMP and terminates processes carrying this job's tracking ID.
+      - name: Isolate Linux job environment
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          job_tmp="$RUNNER_TEMP/ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir -p "$job_tmp" "$HOME/.cache"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
+          # Do not accidentally invoke Windows executables through WSL interop.
+          linux_path=$(printf '%s' "$PATH" | tr ':' '\n' | sed '/^\/mnt\/[a-zA-Z]\//d' | paste -sd:)
+          echo "PATH=$linux_path" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Isolate Python dependencies and temporary files
+        shell: python {0}
+        run: |
+          import os, pathlib, tempfile, venv
+          root = pathlib.Path(tempfile.mkdtemp(prefix="ci-python-", dir=os.environ["RUNNER_TEMP"]))
+          venv.create(root / "venv", with_pip=True)
+          (root / "tmp").mkdir()
+          with open(os.environ["GITHUB_PATH"], "a") as output:
+              print(root / "venv" / ("Scripts" if os.name == "nt" else "bin"), file=output)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print("VIRTUAL_ENV=" + str(root / "venv"), file=output)
+              print("PYTHONNOUSERSITE=1", file=output)
+              for key in ("TMPDIR", "TMP", "TEMP"):
+                  print(key + "=" + str(root / "tmp"), file=output)
       - run: pip install -e ".[dev]"
       # integration tests skip themselves when no Aseprite binary is present
       - run: pytest -q
