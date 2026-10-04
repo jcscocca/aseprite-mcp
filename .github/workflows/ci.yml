@@ -18,6 +18,22 @@ jobs:
         with:
           path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
           clean: true
+      - name: Retain isolated checkouts for fourteen days
+        if: runner.environment == 'self-hosted'
+        shell: node {0}
+        run: |
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = fs.realpathSync(path.join(process.env.GITHUB_WORKSPACE, 'work'));
+          const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+          for (const name of fs.readdirSync(root)) {
+            if (!/^[0-9]+-[0-9]+-[A-Za-z0-9_-]+-[0-9]+$/.test(name)) continue;
+            const target = path.join(root, name);
+            const stat = fs.lstatSync(target);
+            if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mtimeMs >= cutoff) continue;
+            if (!fs.realpathSync(target).startsWith(root + path.sep)) throw new Error('Unsafe cleanup path');
+            fs.rmSync(target, {recursive: true, force: true});
+          }
       # Each registration has its own _work root; each job checks out a fresh subdirectory.
       # GitHub Runner cleans RUNNER_TEMP and terminates processes carrying this job's tracking ID.
       - name: Isolate Linux job environment
