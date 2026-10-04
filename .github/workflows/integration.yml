@@ -21,23 +21,57 @@ env:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, thinkpad]
+    defaults:
+      run:
+        working-directory: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}
+          clean: true
+      - name: Retain isolated checkouts for fourteen days
+        if: runner.environment == 'self-hosted'
+        shell: node {0}
+        run: |
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = fs.realpathSync(path.join(process.env.GITHUB_WORKSPACE, 'work'));
+          const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+          for (const name of fs.readdirSync(root)) {
+            if (!/^[0-9]+-[0-9]+-[A-Za-z0-9_-]+-[0-9]+$/.test(name)) continue;
+            const target = path.join(root, name);
+            const stat = fs.lstatSync(target);
+            if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mtimeMs >= cutoff) continue;
+            if (!fs.realpathSync(target).startsWith(root + path.sep)) throw new Error('Unsafe cleanup path');
+            fs.rmSync(target, {recursive: true, force: true});
+          }
+      # Each registration has its own _work root; each job checks out a fresh subdirectory.
+      # GitHub Runner cleans RUNNER_TEMP and terminates processes carrying this job's tracking ID.
+      - name: Isolate Linux job environment
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Chromium Unix sockets require a short path, even when _work is deeply nested.
+          job_tmp=$(mktemp -d /tmp/gha.XXXXXX)
+          echo "CI_JOB_TEMP=$job_tmp" >> "$GITHUB_ENV"
+          mkdir -p "$job_tmp" "$HOME/.cache"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
+          # Do not accidentally invoke Windows executables through WSL interop.
+          linux_path=$(printf '%s' "$PATH" | tr ':' '\n' | sed '/^\/mnt\/[a-zA-Z]\//d' | paste -sd:)
+          echo "PATH=$linux_path" >> "$GITHUB_ENV"
       - name: Restore cached Aseprite
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: aseprite-bin
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin
           key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
       # runtime libs are needed on cache hits too; the -dev packages pull them in
-      - name: Install dependencies
+      - name: Check preinstalled build dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ninja-build \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
-            libfontconfig1-dev
+          cmake --version
+          ninja --version
+          pkg-config --exists pixman-1 freetype2 harfbuzz x11 xcursor xi xrandr gl fontconfig
       - name: Build Aseprite (CLI-only, no Skia)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -56,7 +90,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: aseprite-bin
+          path: work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin
           key: aseprite-cli-${{ env.ASEPRITE_REF }}-${{ runner.os }}
       # fail here rather than letting the integration tests silently skip
       - name: Verify the binary runs
@@ -64,8 +98,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Isolate Python dependencies and temporary files
+        shell: python {0}
+        run: |
+          import os, pathlib, tempfile, venv
+          root = pathlib.Path(tempfile.mkdtemp(prefix="ci-python-", dir=os.environ["RUNNER_TEMP"]))
+          venv.create(root / "venv", with_pip=True)
+          (root / "tmp").mkdir()
+          with open(os.environ["GITHUB_PATH"], "a") as output:
+              print(root / "venv" / ("Scripts" if os.name == "nt" else "bin"), file=output)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print("VIRTUAL_ENV=" + str(root / "venv"), file=output)
+              print("PYTHONNOUSERSITE=1", file=output)
+              for key in ("TMPDIR", "TMP", "TEMP"):
+                  print(key + "=" + os.environ.get("CI_JOB_TEMP", str(root / "tmp")), file=output)
       - run: pip install -e ".[dev]"
       - name: Run the full suite
         env:
-          ASEPRITE_BIN: ${{ github.workspace }}/aseprite-bin/aseprite
+          ASEPRITE_BIN: ${{ github.workspace }}/work/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ strategy.job-index || 0 }}/aseprite-bin/aseprite
         run: pytest -q tests
+      - name: Remove this job's Linux temporary directory
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          case "${CI_JOB_TEMP:-}" in
+            /tmp/gha.*) rm -rf -- "$CI_JOB_TEMP" ;;
+            '') ;;
+            *) echo "Unexpected temporary directory; refusing cleanup" >&2; exit 1 ;;
+          esac
